@@ -14,6 +14,14 @@ jobs:
     steps:
       - name: Install dependencies
         run: npm install
+        
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Show current directory (debug)
+        run: |
+          pwd
+          ls -la
 
       - name: Run checklist.js
         env:
