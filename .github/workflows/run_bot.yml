@@ -12,6 +12,8 @@ jobs:
     timeout-minutes: 30  # stop after 30 minutes
     
     steps:
+      - name: Install dependencies
+        run: npm install
 
       - name: Run checklist.js
         env:
