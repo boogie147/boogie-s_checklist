@@ -25,6 +25,7 @@ jobs:
 
 
       - name: Run checklist.js
+        working-directory: ./
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
         run: 
