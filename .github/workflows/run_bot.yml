@@ -15,9 +15,9 @@ jobs:
     - name: Install dependencies
         run: npm install
 
-    - name: Run checklist.py
+    - name: Run checklist.jy
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
         run: 
-          python checklist.py
+          node checklist.jy
     
