@@ -18,11 +18,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Show current directory (debug)
-        run: |
-          pwd
-          ls -la
-
       - name: Run checklist.js
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
