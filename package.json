@@ -1,6 +1,0 @@
-git add package.json package-lock.json checklist.js
-git commit -m "Convert bot to Node.js and add package.json"
-git push origin main
-
-npm init -y
-npm install node-telegram-bot-api dotenv
