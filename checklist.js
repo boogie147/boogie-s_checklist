@@ -3,7 +3,7 @@ const TelegramBot = require('node-telegram-bot-api');
 const fs = require('fs');
 
 const TOKEN = process.env.BOT_TOKEN;
-const DATA_FILE = 'checklists.json';
+const DATA_FILE = './checklists.json';
 const bot = new TelegramBot(TOKEN, { polling: true });
 
 // === Load/save functions ===
