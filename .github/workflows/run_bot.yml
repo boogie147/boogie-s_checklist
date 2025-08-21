@@ -30,6 +30,9 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
         run: node checklist.js
 
+      - name: Debug file existence
+        run:  ls -1
+
       - name: Upload updated data
         if: always()
         uses: actions/upload-artifact@v4
