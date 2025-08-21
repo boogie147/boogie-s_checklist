@@ -2,32 +2,24 @@ name: Run Telegram Bot Twice Daily
 
 on:
   schedule:
-      - cron: '30 2 * * *'    # 10:30 AM SGT (SGT = UTC+8 → 3 AM UTC)
-      - cron: '20 8 * * *'   # 4:20 PM SGT (4:20 PM = 8:20 AM UTC)
+    - cron: '30 2 * * *'    # 10:30 AM SGT
+    - cron: '20 8 * * *'    # 4:20 PM SGT
   workflow_dispatch:
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 30  # stop after 30 minutes
-    
+    timeout-minutes: 30
     steps:
-      - name: Install dependencies
-        run: npm install
-        
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '20'  # or any version you prefer
-
+      - name: Install dependencies
+        run: npm install
+        working-directory: .
 
       - name: Run checklist.js
-        working-directory: ./
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-        run: 
-          node checklist.js
-    
+        run: node checklist.js
+        working-directory: .
