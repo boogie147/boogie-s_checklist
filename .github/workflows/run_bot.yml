@@ -10,32 +10,30 @@ jobs:
   run-bot:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+
     steps:
-      # Step 1: Checkout code
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v3
 
-      # Step 2: Download previous checklist.json artifact (if it exists)
       - name: Download previous data
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: checklist-data
+          path: ./
         continue-on-error: true
 
-      # Step 3: Install dependencies
       - name: Install dependencies
         run: npm install
 
-      # Step 4: Run the bot
       - name: Run checklist.js
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
         run: node checklist.js
 
-      # Step 5: Upload updated checklist.json for persistence
       - name: Upload updated data
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: checklist-data
           path: checklists.json
+          if-no-files-found: ignore
