@@ -30,6 +30,17 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
         run: node checklist.js
 
+      - name: Commit and push updated data
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -B data
+          cp checklists.json ./checklists.json
+          git add checklists.json
+          git commit -m "Update checklist data [skip ci]" || echo "No changes to commit"
+          git push origin data
+
+
       - name: Debug file existence
         run:  ls -1
 
