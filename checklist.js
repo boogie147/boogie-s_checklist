@@ -73,9 +73,11 @@ process.on('uncaughtException',  e => console.error('uncaughtException:', e?.res
 const HEARTBEAT = setInterval(() => { if (VERBOSE) console.log('…heartbeat'); }, 10_000);
 
 // ======= Commands =======
-bot.onText(/^\/start$/, async (msg)=>{
+// /start
+bot.onText(cmdRe('start'), async (msg) => {
   const cid = msg.chat.id; ensureChatTracked(cid);
-  await reply(cid,
+  await reply(
+    cid,
     ['<b>Checklist Bot</b> is awake 👋',
      'Use buttons or commands:',
      '• /add <text>',
@@ -83,7 +85,58 @@ bot.onText(/^\/start$/, async (msg)=>{
      '• /done <number>',
      '• /remove <number>',
      '• /clear'].join('\n'),
-    buildKeyboard(getList(cid)));
+    buildKeyboard(getList(cid))
+  );
+});
+
+// /add <text>
+bot.onText(cmdRe('add', true), async (msg, m) => {
+  const cid = msg.chat.id; ensureChatTracked(cid);
+  const text = (m[1] || '').trim();
+  if (!text) return reply(cid, 'Usage: /add <task>');
+  getList(cid).push({ text, done: false }); saveData(DB);
+  await reply(cid, `Added: <b>${escapeHtml(text)}</b>`); await sendListInteractive(cid);
+});
+
+// /list
+bot.onText(cmdRe('list'), async (msg) => {
+  const cid = msg.chat.id; ensureChatTracked(cid);
+  await sendListInteractive(cid);
+});
+
+// /done <n>
+bot.onText(cmdRe('done', true), async (msg, m) => {
+  const cid = msg.chat.id; ensureChatTracked(cid);
+  const i = parseInt(m[1], 10) - 1;
+  const items = getList(cid);
+  if (i >= 0 && i < items.length) {
+    items[i].done = true; saveData(DB);
+    await reply(cid, `Marked done: <b>${escapeHtml(items[i].text)}</b> ✅`);
+    await sendListInteractive(cid);
+  } else {
+    await reply(cid, 'Invalid item number.');
+  }
+});
+
+// /remove <n>
+bot.onText(cmdRe('remove', true), async (msg, m) => {
+  const cid = msg.chat.id; ensureChatTracked(cid);
+  const i = parseInt(m[1], 10) - 1;
+  const items = getList(cid);
+  if (i >= 0 && i < items.length) {
+    const r = items.splice(i, 1)[0]; saveData(DB);
+    await reply(cid, `Removed: <b>${escapeHtml(r.text)}</b> 🗑️`);
+    await sendListInteractive(cid);
+  } else {
+    await reply(cid, 'Invalid item number.');
+  }
+});
+
+// /clear
+bot.onText(cmdRe('clear'), async (msg) => {
+  const cid = msg.chat.id; ensureChatTracked(cid);
+  DB[cid] = []; saveData(DB);
+  await reply(cid, 'Cleared your checklist.'); await sendListInteractive(cid);
 });
 
 bot.onText(/^\/add (.+)/, async (msg, m)=>{
