@@ -5,11 +5,12 @@ const path = require('path');
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 if (!BOT_TOKEN) {
-  console.error('BOT_TOKEN is missing. Add it to your GitHub Secrets.');
+  console.error('BOT_TOKEN is missing. Add it to GitHub Secrets.');
   process.exit(1);
 }
 
-const bot = new TelegramBot(BOT_TOKEN, { polling: false });
+// Start bot in polling mode (listens to messages)
+const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
 // === Persistence helpers ===
 const DATA_PATH = path.resolve(__dirname, 'checklists.json');
@@ -32,14 +33,13 @@ function saveData(obj) {
 
 let DB = loadData();
 
-// === Checklist helpers ===
 const getList = (chatId) => (DB[chatId] ||= []);
 const renderList = (items) =>
   items.length
     ? items.map((it, i) => `${i + 1}. ${it.done ? '✅' : '⬜️'} ${it.text}`).join('\n')
-    : 'No items yet. Use /add <task> to add one.';
+    : 'No items yet. Use /add <task>.';
 
-async function reply(chatId, text) {
+function reply(chatId, text) {
   return bot.sendMessage(chatId, text, { parse_mode: 'HTML' });
 }
 
@@ -48,57 +48,57 @@ function escapeHtml(s) {
 }
 
 // === Commands ===
-async function cmdAdd(chatId, args) {
-  const text = args.trim();
-  if (!text) return reply(chatId, 'Usage: /add <task>');
+bot.onText(/^\/add (.+)/, (msg, match) => {
+  const chatId = msg.chat.id;
+  const text = match[1].trim();
   const items = getList(chatId);
   items.push({ text, done: false });
   saveData(DB);
-  await reply(chatId, `Added: <b>${escapeHtml(text)}</b>`);
-}
+  reply(chatId, `Added: <b>${escapeHtml(text)}</b>`);
+});
 
-async function cmdList(chatId) {
+bot.onText(/^\/list$/, (msg) => {
+  const chatId = msg.chat.id;
   const items = getList(chatId);
-  return reply(chatId, `<b>Your checklist</b>\n${renderList(items)}`);
-}
+  reply(chatId, `<b>Your checklist</b>\n${renderList(items)}`);
+});
 
-async function cmdDone(chatId, args) {
-  const idx = parseInt(args, 10) - 1;
+bot.onText(/^\/done (\d+)/, (msg, match) => {
+  const chatId = msg.chat.id;
+  const idx = parseInt(match[1], 10) - 1;
   const items = getList(chatId);
-  if (isNaN(idx) || idx < 0 || idx >= items.length) {
-    return reply(chatId, 'Usage: /done <number>');
+  if (idx >= 0 && idx < items.length) {
+    items[idx].done = true;
+    saveData(DB);
+    reply(chatId, `Marked done: <b>${escapeHtml(items[idx].text)}</b> ✅`);
+  } else {
+    reply(chatId, 'Invalid item number.');
   }
-  items[idx].done = true;
-  saveData(DB);
-  await reply(chatId, `Marked done: <b>${escapeHtml(items[idx].text)}</b> ✅`);
-}
+});
 
-async function cmdRemove(chatId, args) {
-  const idx = parseInt(args, 10) - 1;
+bot.onText(/^\/remove (\d+)/, (msg, match) => {
+  const chatId = msg.chat.id;
+  const idx = parseInt(match[1], 10) - 1;
   const items = getList(chatId);
-  if (isNaN(idx) || idx < 0 || idx >= items.length) {
-    return reply(chatId, 'Usage: /remove <number>');
+  if (idx >= 0 && idx < items.length) {
+    const removed = items.splice(idx, 1)[0];
+    saveData(DB);
+    reply(chatId, `Removed: <b>${escapeHtml(removed.text)}</b> 🗑️`);
+  } else {
+    reply(chatId, 'Invalid item number.');
   }
-  const removed = items.splice(idx, 1)[0];
-  saveData(DB);
-  await reply(chatId, `Removed: <b>${escapeHtml(removed.text)}</b> 🗑️`);
-}
+});
 
-async function cmdClear(chatId) {
+bot.onText(/^\/clear$/, (msg) => {
+  const chatId = msg.chat.id;
   DB[chatId] = [];
   saveData(DB);
-  await reply(chatId, 'Cleared your checklist.');
-}
+  reply(chatId, 'Cleared your checklist.');
+});
 
-// === Scheduled entrypoint ===
-(async function main() {
-  saveData(DB); // normalize format
-
-  const CHAT_ID = process.env.CHAT_ID;
-  if (CHAT_ID) {
-    const items = getList(CHAT_ID);
-    await reply(CHAT_ID, `<b>Checklist digest</b>\n${renderList(items)}`);
-  }
-
-  console.log('checklist.js run complete.');
-})();
+// === Auto-shutdown after 30 minutes ===
+setTimeout(() => {
+  console.log('⏱️ 30 minutes elapsed. Stopping bot.');
+  bot.stopPolling();
+  process.exit(0);
+}, 0.5 * 60 * 1000);
