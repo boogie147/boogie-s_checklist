@@ -117,4 +117,4 @@ setTimeout(() => {
 setTimeout(() => {
   console.log("🔴 Shutting down after 30 mins.");
   process.exit(0);
-}, 30 * 60 * 1000);
+}, 1 * 60 * 1000);
