@@ -2,41 +2,53 @@ name: Run Telegram Bot Twice Daily
 
 on:
   schedule:
-    - cron: '30 2 * * *'    # 10:30 AM SGT
-    - cron: '20 8 * * *'    # 4:20 PM SGT
+    - cron: '30 2 * * *'   # 10:30 AM SGT
+    - cron: '20 8 * * *'   # 4:20 PM SGT
   workflow_dispatch:
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      # === Restore previous data from "data" branch ===
-      - name: Restore previous data
-        run: |
-          git fetch origin data || true
-          git checkout data -- checklists.json || echo "No previous data"
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
-      - name: Run checklist.js
+      - name: Restore existing checklists.json
+        run: |
+          git fetch origin main
+          if git show origin/main:checklists.json >/dev/null 2>&1; then
+            git show origin/main:checklists.json > checklists.json
+            echo "Restored checklists.json from main."
+          else
+            echo "{}" > checklists.json
+            echo "Initialized new checklists.json."
+          fi
+
+      - name: Run bot
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }} # optional for daily digest
         run: node checklist.js
 
-      # === Commit and push updated data to "data" branch ===
-      - name: Commit and push updated data
+      - name: Commit and push updates
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git fetch origin data || true
-          git checkout data || git checkout -b data
-          cp ../checklists.json ./checklists.json
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git add checklists.json
           git commit -m "Update checklist data [skip ci]" || echo "No changes to commit"
-          git push origin data
+          git push origin HEAD:main
