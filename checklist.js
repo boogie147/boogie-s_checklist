@@ -138,7 +138,9 @@ bot.on('polling_error', (err)=>{
 
 // ======= Reminders / Awake =======
 async function broadcastAwake() {
-  const targets = new Set(ActiveChats); if (ANNOUNCE_CHAT) targets.add(String(ANNOUNCE_CHAT));
+  if (STARTUP_REMINDER) {
+    await sendReminder('🟢 Bot awake: ');
+    const targets = new Set(ActiveChats); if (ANNOUNCE_CHAT) targets.add(String(ANNOUNCE_CHAT));
   for (const cid of targets) {
     try {
       await reply(cid, '👋 Hello! The bot is awake. Use /list or the buttons below.');
