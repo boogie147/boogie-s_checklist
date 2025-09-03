@@ -18,10 +18,9 @@ const STARTUP_REMINDER = String(process.env.STARTUP_REMINDER || 'true') === 'tru
 // Create bot WITHOUT polling first; we will delete webhook, then start polling explicitly.
 const bot = new TelegramBot(BOT_TOKEN, { polling: false });
 
-// Put near the top, after you create `bot`:
+// Helper to accept /cmd and /cmd@BotName (with optional argument)
 const cmdRe = (name, hasArg = false) =>
   new RegExp(`^\\/${name}(?:@\\w+)?${hasArg ? "\\s+(.+)" : "\\s*$"}`, "i");
-
 
 // ======= Persistence =======
 const DATA_PATH = path.resolve(__dirname, 'checklists.json');
@@ -44,8 +43,8 @@ const truncate = (s,n)=> s && s.length>n ? s.slice(0,n-1)+'…' : s;
 
 function renderLines(items) {
   return items.length
-    ? items.map((it,i)=> `${i+1}. ${it.done?'✅':'⬜️'} ${it.text}`).join('\n')
-    : 'No items yet. Use /add <task> or the + button.';
+    ? items.map((it,i)=> `${i+1}. ${it.done ? '✅' : '⬜️'} ${escapeHtml(it.text)}`).join('\n')
+    : 'No items yet. Use /add &lt;task&gt; or the + button.';
 }
 function buildKeyboard(items) {
   const rows = items.map((it,i)=> ([
@@ -72,7 +71,7 @@ process.on('uncaughtException',  e => console.error('uncaughtException:', e?.res
 // Keep a heartbeat so process never falls out even if polling fails/retries.
 const HEARTBEAT = setInterval(() => { if (VERBOSE) console.log('…heartbeat'); }, 10_000);
 
-// ======= Commands =======
+// ======= Commands (with /cmd and /cmd@BotName support) =======
 // /start
 bot.onText(cmdRe('start'), async (msg) => {
   const cid = msg.chat.id; ensureChatTracked(cid);
@@ -80,10 +79,10 @@ bot.onText(cmdRe('start'), async (msg) => {
     cid,
     ['<b>Checklist Bot</b> is awake 👋',
      'Use buttons or commands:',
-     '• /add <text>',
+     '• /add &lt;text&gt;',
      '• /list',
-     '• /done <number>',
-     '• /remove <number>',
+     '• /done &lt;number&gt;',
+     '• /remove &lt;number&gt;',
      '• /clear'].join('\n'),
     buildKeyboard(getList(cid))
   );
@@ -93,7 +92,7 @@ bot.onText(cmdRe('start'), async (msg) => {
 bot.onText(cmdRe('add', true), async (msg, m) => {
   const cid = msg.chat.id; ensureChatTracked(cid);
   const text = (m[1] || '').trim();
-  if (!text) return reply(cid, 'Usage: /add <task>');
+  if (!text) return reply(cid, 'Usage: /add &lt;task&gt;');
   getList(cid).push({ text, done: false }); saveData(DB);
   await reply(cid, `Added: <b>${escapeHtml(text)}</b>`); await sendListInteractive(cid);
 });
@@ -114,7 +113,7 @@ bot.onText(cmdRe('done', true), async (msg, m) => {
     await reply(cid, `Marked done: <b>${escapeHtml(items[i].text)}</b> ✅`);
     await sendListInteractive(cid);
   } else {
-    await reply(cid, 'Invalid item number.');
+    await reply(cid, 'Usage: /done &lt;number&gt;');
   }
 });
 
@@ -128,7 +127,7 @@ bot.onText(cmdRe('remove', true), async (msg, m) => {
     await reply(cid, `Removed: <b>${escapeHtml(r.text)}</b> 🗑️`);
     await sendListInteractive(cid);
   } else {
-    await reply(cid, 'Invalid item number.');
+    await reply(cid, 'Usage: /remove &lt;number&gt;');
   }
 });
 
@@ -139,30 +138,10 @@ bot.onText(cmdRe('clear'), async (msg) => {
   await reply(cid, 'Cleared your checklist.'); await sendListInteractive(cid);
 });
 
-bot.onText(/^\/add (.+)/, async (msg, m)=>{
-  const cid=msg.chat.id; ensureChatTracked(cid);
-  const text = m[1].trim(); if(!text) return reply(cid,'Usage: /add <task>');
-  getList(cid).push({ text, done:false }); saveData(DB);
-  await reply(cid, `Added: <b>${escapeHtml(text)}</b>`); await sendListInteractive(cid);
-});
-bot.onText(/^\/list$/, async (msg)=>{ const cid=msg.chat.id; ensureChatTracked(cid); await sendListInteractive(cid); });
-bot.onText(/^\/done (\d+)/, async (msg,m)=>{
-  const cid=msg.chat.id; ensureChatTracked(cid);
-  const i = parseInt(m[1],10)-1; const items=getList(cid);
-  if(i>=0 && i<items.length){ items[i].done=true; saveData(DB); await reply(cid,`Marked done: <b>${escapeHtml(items[i].text)}</b> ✅`); await sendListInteractive(cid);}
-  else await reply(cid,'Invalid item number.');
-});
-bot.onText(/^\/remove (\d+)/, async (msg,m)=>{
-  const cid=msg.chat.id; ensureChatTracked(cid);
-  const i = parseInt(m[1],10)-1; const items=getList(cid);
-  if(i>=0 && i<items.length){ const r=items.splice(i,1)[0]; saveData(DB); await reply(cid,`Removed: <b>${escapeHtml(r.text)}</b> 🗑️`); await sendListInteractive(cid);}
-  else await reply(cid,'Invalid item number.');
-});
-bot.onText(/^\/clear$/, async (msg)=>{ const cid=msg.chat.id; ensureChatTracked(cid); DB[cid]=[]; saveData(DB); await reply(cid,'Cleared your checklist.'); await sendListInteractive(cid); });
-// Non-command text -> add item
+// Non-command text -> add item (works in 1:1 chats; in groups, privacy mode may block non-commands)
 bot.on('message', async (msg)=>{
   if(!msg.text) return;
-  if(/^\/(start|add|list|done|remove|clear)/.test(msg.text)) return;
+  if(/^\/(start|add|list|done|remove|clear)/i.test(msg.text)) return; // commands handled above
   const cid=msg.chat.id; ensureChatTracked(cid);
   const t = msg.text.trim(); if(!t) return;
   getList(cid).push({ text:t, done:false }); saveData(DB);
@@ -195,9 +174,13 @@ bot.on('polling_error', (err)=>{
   console.error('polling_error:', err?.response?.body || err);
 });
 
+if (VERBOSE) {
+  bot.on('message', (m) => console.log('msg from', m.chat?.id, m.text));
+  bot.on('callback_query', (q) => console.log('callback from', q.message?.chat?.id, q.data));
+}
+
 // ======= Reminders / Awake =======
 async function broadcastAwake() {
-  // ✅ define the targets set (this was missing and crashed your code)
   const targets = new Set(ActiveChats);
   if (ANNOUNCE_CHAT) targets.add(String(ANNOUNCE_CHAT));
 
@@ -222,7 +205,7 @@ async function sendReminder(prefix){
         await reply(
           cid,
           `${prefix}Your list is empty. Tap ➕ Add to start.`,
-          buildKeyboard(items)       // show controls row even when empty
+          buildKeyboard(items) // show controls row even when empty
         );
       } else {
         await reply(
