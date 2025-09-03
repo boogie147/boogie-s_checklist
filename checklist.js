@@ -1,120 +1,104 @@
-require('dotenv').config();
+// checklist.js
 const TelegramBot = require('node-telegram-bot-api');
 const fs = require('fs');
+const path = require('path');
 
-const TOKEN = process.env.BOT_TOKEN;
-const DATA_FILE = './checklists.json';
-const bot = new TelegramBot(TOKEN, { polling: true });
+const BOT_TOKEN = process.env.BOT_TOKEN;
+if (!BOT_TOKEN) {
+  console.error('BOT_TOKEN is missing. Add it to your GitHub Secrets.');
+  process.exit(1);
+}
 
-// === Load/save functions ===
+const bot = new TelegramBot(BOT_TOKEN, { polling: false });
+
+// === Persistence helpers ===
+const DATA_PATH = path.resolve(__dirname, 'checklists.json');
+
 function loadData() {
-  if (fs.existsSync(DATA_FILE)) {
-    try {
-      return JSON.parse(fs.readFileSync(DATA_FILE));
-    } catch (e) {
-      console.warn("⚠️ Invalid JSON, resetting.");
-      return {};
-    }
+  try {
+    const txt = fs.readFileSync(DATA_PATH, 'utf8');
+    return JSON.parse(txt);
+  } catch {
+    fs.writeFileSync(DATA_PATH, JSON.stringify({}, null, 2));
+    return {};
   }
-  return {};
 }
 
-function saveData(data) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+function saveData(obj) {
+  const tmp = DATA_PATH + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(obj, null, 2));
+  fs.renameSync(tmp, DATA_PATH);
 }
 
-let data = loadData();
+let DB = loadData();
 
-// === Bot Commands ===
+// === Checklist helpers ===
+const getList = (chatId) => (DB[chatId] ||= []);
+const renderList = (items) =>
+  items.length
+    ? items.map((it, i) => `${i + 1}. ${it.done ? '✅' : '⬜️'} ${it.text}`).join('\n')
+    : 'No items yet. Use /add <task> to add one.';
 
-bot.onText(/\/start/, (msg) => {
-  const id = msg.from.id;
-  data[id] = data[id] || { checklist: [] };
-  saveData(data);
-  bot.sendMessage(id, `👋 Welcome to Checklist Bot!\n\nCommands:\n/add <task>\n/list\n/done <number>\n/remove <number>\n/clear\n/reset`);
-});
-
-bot.onText(/\/add (.+)/, (msg, match) => {
-  const id = msg.from.id;
-  const item = match[1];
-  data[id] = data[id] || { checklist: [] };
-  data[id].checklist.push({ item, done: false });
-  saveData(data);
-  bot.sendMessage(id, `✅ Added: ${item}`);
-});
-
-bot.onText(/\/list/, (msg) => {
-  const id = msg.from.id;
-  const list = data[id]?.checklist || [];
-  if (!list.length) return bot.sendMessage(id, "📜 Your checklist is empty.");
-  const text = list.map((e, i) => `${i + 1}. ${e.done ? "✅" : "⬜"} ${e.item}`).join('\n');
-  bot.sendMessage(id, `📋 Your checklist:\n${text}`);
-});
-
-bot.onText(/\/done (\d+)/, (msg, match) => {
-  const id = msg.from.id;
-  const i = parseInt(match[1]) - 1;
-  if (data[id]?.checklist?.[i]) {
-    data[id].checklist[i].done = true;
-    saveData(data);
-    bot.sendMessage(id, `✅ Marked item ${i + 1} as done.`);
-  } else {
-    bot.sendMessage(id, "❌ Invalid task number.");
-  }
-});
-
-bot.onText(/\/remove (\d+)/, (msg, match) => {
-  const id = msg.from.id;
-  const i = parseInt(match[1]) - 1;
-  if (data[id]?.checklist?.[i]) {
-    const removed = data[id].checklist.splice(i, 1)[0];
-    saveData(data);
-    bot.sendMessage(id, `🗑️ Removed: ${removed.item}`);
-  } else {
-    bot.sendMessage(id, "❌ Invalid task number.");
-  }
-});
-
-bot.onText(/\/clear/, (msg) => {
-  const id = msg.from.id;
-  if (data[id]?.checklist?.length) {
-    data[id].checklist = [];
-    saveData(data);
-    bot.sendMessage(id, "🧹 Checklist cleared.");
-  } else {
-    bot.sendMessage(id, "Checklist is already empty.");
-  }
-});
-
-bot.onText(/\/reset/, (msg) => {
-  const id = msg.from.id;
-  if (data[id]?.checklist?.length) {
-    data[id].checklist.forEach(e => e.done = false);
-    saveData(data);
-    bot.sendMessage(id, "♻️ All tasks marked as not done.");
-  } else {
-    bot.sendMessage(id, "Checklist is empty.");
-  }
-});
-
-// === Startup message to all users
-for (const id of Object.keys(data)) {
-  bot.sendMessage(id, "✅ Bot is now online!");
+async function reply(chatId, text) {
+  return bot.sendMessage(chatId, text, { parse_mode: 'HTML' });
 }
 
-// === Reminder after 10 seconds
-setTimeout(() => {
-  for (const id of Object.keys(data)) {
-    const list = data[id]?.checklist || [];
-    let message = "⏰ Reminder!\n";
-    if (!list.length) message += "Your checklist is empty.";
-    else message += list.map((e, i) => `${i + 1}. ${e.done ? "✅" : "⬜"} ${e.item}`).join('\n');
-    bot.sendMessage(id, message);
-  }
-}, 10000);
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+}
 
-// === Auto shutdown after 30 minutes
-setTimeout(() => {
-  console.log("🔴 Shutting down after 30 mins.");
-  process.exit(0);
-}, 1 * 60 * 1000);
+// === Commands ===
+async function cmdAdd(chatId, args) {
+  const text = args.trim();
+  if (!text) return reply(chatId, 'Usage: /add <task>');
+  const items = getList(chatId);
+  items.push({ text, done: false });
+  saveData(DB);
+  await reply(chatId, `Added: <b>${escapeHtml(text)}</b>`);
+}
+
+async function cmdList(chatId) {
+  const items = getList(chatId);
+  return reply(chatId, `<b>Your checklist</b>\n${renderList(items)}`);
+}
+
+async function cmdDone(chatId, args) {
+  const idx = parseInt(args, 10) - 1;
+  const items = getList(chatId);
+  if (isNaN(idx) || idx < 0 || idx >= items.length) {
+    return reply(chatId, 'Usage: /done <number>');
+  }
+  items[idx].done = true;
+  saveData(DB);
+  await reply(chatId, `Marked done: <b>${escapeHtml(items[idx].text)}</b> ✅`);
+}
+
+async function cmdRemove(chatId, args) {
+  const idx = parseInt(args, 10) - 1;
+  const items = getList(chatId);
+  if (isNaN(idx) || idx < 0 || idx >= items.length) {
+    return reply(chatId, 'Usage: /remove <number>');
+  }
+  const removed = items.splice(idx, 1)[0];
+  saveData(DB);
+  await reply(chatId, `Removed: <b>${escapeHtml(removed.text)}</b> 🗑️`);
+}
+
+async function cmdClear(chatId) {
+  DB[chatId] = [];
+  saveData(DB);
+  await reply(chatId, 'Cleared your checklist.');
+}
+
+// === Scheduled entrypoint ===
+(async function main() {
+  saveData(DB); // normalize format
+
+  const CHAT_ID = process.env.CHAT_ID;
+  if (CHAT_ID) {
+    const items = getList(CHAT_ID);
+    await reply(CHAT_ID, `<b>Checklist digest</b>\n${renderList(items)}`);
+  }
+
+  console.log('checklist.js run complete.');
+})();
