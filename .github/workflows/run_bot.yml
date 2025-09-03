@@ -15,6 +15,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
+      # === Restore previous data from "data" branch ===
+      - name: Restore previous data
+        run: |
+          git fetch origin data || true
+          git checkout data -- checklists.json || echo "No previous data"
+
       - name: Install dependencies
         run: npm install
 
@@ -23,24 +29,14 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
         run: node checklist.js
 
+      # === Commit and push updated data to "data" branch ===
       - name: Commit and push updated data
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -B data
-          cp checklists.json ./checklists.json
+          git fetch origin data || true
+          git checkout data || git checkout -b data
+          cp ../checklists.json ./checklists.json
           git add checklists.json
           git commit -m "Update checklist data [skip ci]" || echo "No changes to commit"
           git push origin data
-
-
-      - name: Debug file existence
-        run:  ls -1
-
-      - name: Upload updated data
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: checklist-data
-          path: checklists.json
-          if-no-files-found: ignore
