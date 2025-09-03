@@ -11,7 +11,7 @@ if (!BOT_TOKEN) {
 
 // ===== Config from env / dispatch =====
 const VERBOSE = String(process.env.VERBOSE || 'false') === 'true';
-const ANNOUNCE_CHAT = process.env.CHAT_ID || null;
+const ANNOUNCE_CHAT = process.env.CHAT_ID || null;          // optional; can be empty
 const DURATION_MINUTES = Number(process.env.DURATION_MINUTES || 30); // 0 = no auto-stop
 const STARTUP_REMINDER = String(process.env.STARTUP_REMINDER || 'true') === 'true';
 
@@ -60,21 +60,66 @@ async function reply(cid, html, extra={}) { return bot.sendMessage(cid, html, { 
 async function edit(cid, mid, html, extra={}) {
   return bot.editMessageText(html, { chat_id: cid, message_id: mid, parse_mode:'HTML', ...extra });
 }
-function ensureChatTracked(cid){ ActiveChats.add(String(cid)); if(!DB[cid]) DB[cid]=[]; }
-async function sendListInteractive(cid) { const items=getList(cid); return reply(cid, `<b>Your checklist</b>\n${renderLines(items)}`, buildKeyboard(items)); }
-async function refreshMessage(cid, mid){ const items=getList(cid); return edit(cid, mid, `<b>Your checklist</b>\n${renderLines(items)}`, buildKeyboard(items)); }
+
+// Track + persist new chats; return true if this call newly added it
+function ensureChatTracked(cid){
+  const key = String(cid);
+  let added = false;
+  if (!ActiveChats.has(key)) { ActiveChats.add(key); added = true; }
+  if (!DB[cid]) { DB[cid] = []; added = true; }
+  return added;
+}
+
+async function sendListInteractive(cid) {
+  const items=getList(cid);
+  return reply(cid, `<b>Your checklist</b>\n${renderLines(items)}`, buildKeyboard(items));
+}
+async function refreshMessage(cid, mid){
+  const items=getList(cid);
+  return edit(cid, mid, `<b>Your checklist</b>\n${renderLines(items)}`, buildKeyboard(items));
+}
+
+// ===== Welcome-on-first-contact helpers =====
+const WelcomedThisRun = new Set();
+
+async function sendReminderToChat(cid, prefix) {
+  const items = getList(cid);
+  if (isAllDone(items)) {
+    await reply(cid, `${prefix}🎉 Awesome — your list is complete!`);
+  } else if (items.length === 0) {
+    await reply(cid, `${prefix}Your list is empty. Tap ➕ Add to start.`, buildKeyboard(items));
+  } else {
+    await reply(cid, `${prefix}Keep going!\n\n${renderLines(items)}`, buildKeyboard(items));
+  }
+}
+
+async function maybeWelcome(cid, newlyTracked) {
+  if (WelcomedThisRun.has(cid)) return;
+  WelcomedThisRun.add(cid);
+
+  // Persist the chat immediately so future runs can broadcast to it at startup
+  if (newlyTracked) saveData(DB);
+
+  await reply(cid, '👋 Hello! The bot is awake. Use /list or the buttons below.');
+  await sendListInteractive(cid);
+  if (STARTUP_REMINDER) {
+    await sendReminderToChat(cid, '🟢 Bot awake: ');
+  }
+}
 
 // ======= Logging & hardening =======
 process.on('unhandledRejection', e => console.error('unhandledRejection:', e?.response?.body || e));
 process.on('uncaughtException',  e => console.error('uncaughtException:', e?.response?.body || e));
-
-// Keep a heartbeat so process never falls out even if polling fails/retries.
 const HEARTBEAT = setInterval(() => { if (VERBOSE) console.log('…heartbeat'); }, 10_000);
 
-// ======= Commands (with /cmd and /cmd@BotName support) =======
+// ======= Commands =======
 // /start
 bot.onText(cmdRe('start'), async (msg) => {
-  const cid = msg.chat.id; ensureChatTracked(cid);
+  const cid = msg.chat.id;
+  const newlyTracked = ensureChatTracked(cid);
+  await maybeWelcome(cid, newlyTracked);
+
+  // Optional extra /start help (keep or remove if too chatty)
   await reply(
     cid,
     ['<b>Checklist Bot</b> is awake 👋',
@@ -90,7 +135,10 @@ bot.onText(cmdRe('start'), async (msg) => {
 
 // /add <text>
 bot.onText(cmdRe('add', true), async (msg, m) => {
-  const cid = msg.chat.id; ensureChatTracked(cid);
+  const cid = msg.chat.id;
+  const newlyTracked = ensureChatTracked(cid);
+  await maybeWelcome(cid, newlyTracked);
+
   const text = (m[1] || '').trim();
   if (!text) return reply(cid, 'Usage: /add &lt;task&gt;');
   getList(cid).push({ text, done: false }); saveData(DB);
@@ -99,13 +147,19 @@ bot.onText(cmdRe('add', true), async (msg, m) => {
 
 // /list
 bot.onText(cmdRe('list'), async (msg) => {
-  const cid = msg.chat.id; ensureChatTracked(cid);
+  const cid = msg.chat.id;
+  const newlyTracked = ensureChatTracked(cid);
+  await maybeWelcome(cid, newlyTracked);
+
   await sendListInteractive(cid);
 });
 
 // /done <n>
 bot.onText(cmdRe('done', true), async (msg, m) => {
-  const cid = msg.chat.id; ensureChatTracked(cid);
+  const cid = msg.chat.id;
+  const newlyTracked = ensureChatTracked(cid);
+  await maybeWelcome(cid, newlyTracked);
+
   const i = parseInt(m[1], 10) - 1;
   const items = getList(cid);
   if (i >= 0 && i < items.length) {
@@ -119,7 +173,10 @@ bot.onText(cmdRe('done', true), async (msg, m) => {
 
 // /remove <n>
 bot.onText(cmdRe('remove', true), async (msg, m) => {
-  const cid = msg.chat.id; ensureChatTracked(cid);
+  const cid = msg.chat.id;
+  const newlyTracked = ensureChatTracked(cid);
+  await maybeWelcome(cid, newlyTracked);
+
   const i = parseInt(m[1], 10) - 1;
   const items = getList(cid);
   if (i >= 0 && i < items.length) {
@@ -133,7 +190,10 @@ bot.onText(cmdRe('remove', true), async (msg, m) => {
 
 // /clear
 bot.onText(cmdRe('clear'), async (msg) => {
-  const cid = msg.chat.id; ensureChatTracked(cid);
+  const cid = msg.chat.id;
+  const newlyTracked = ensureChatTracked(cid);
+  await maybeWelcome(cid, newlyTracked);
+
   DB[cid] = []; saveData(DB);
   await reply(cid, 'Cleared your checklist.'); await sendListInteractive(cid);
 });
@@ -142,7 +202,10 @@ bot.onText(cmdRe('clear'), async (msg) => {
 bot.on('message', async (msg)=>{
   if(!msg.text) return;
   if(/^\/(start|add|list|done|remove|clear)/i.test(msg.text)) return; // commands handled above
-  const cid=msg.chat.id; ensureChatTracked(cid);
+  const cid=msg.chat.id;
+  const newlyTracked = ensureChatTracked(cid);
+  await maybeWelcome(cid, newlyTracked);
+
   const t = msg.text.trim(); if(!t) return;
   getList(cid).push({ text:t, done:false }); saveData(DB);
   await reply(cid, `Added: <b>${escapeHtml(t)}</b>`); await sendListInteractive(cid);
@@ -152,7 +215,9 @@ bot.on('message', async (msg)=>{
 bot.on('callback_query', async (q)=>{
   try{
     const cid = q.message.chat.id; const mid = q.message.message_id;
-    ensureChatTracked(cid);
+    const newlyTracked = ensureChatTracked(cid);
+    await maybeWelcome(cid, newlyTracked);
+
     const items = getList(cid);
     const [action,arg] = (q.data||'').split(':');
 
@@ -184,11 +249,17 @@ async function broadcastAwake() {
   const targets = new Set(ActiveChats);
   if (ANNOUNCE_CHAT) targets.add(String(ANNOUNCE_CHAT));
 
+  if (VERBOSE) console.log('broadcast targets:', [...targets]);
+  if (targets.size === 0) console.log('No targets to notify (ActiveChats empty and CHAT_ID not set).');
+
   for (const cid of targets) {
     try {
       await reply(cid, '👋 Hello! The bot is awake. Use /list or the buttons below.');
       await sendListInteractive(cid);
-    } catch (e) { if (VERBOSE) console.warn('awake send failed for', cid, e?.response?.body || e); }
+      if (STARTUP_REMINDER) {
+        await sendReminderToChat(cid, '🟢 Bot awake: ');
+      }
+    } catch (e) { console.warn('awake send failed for', cid, e?.response?.body || e); }
   }
 }
 
@@ -197,26 +268,7 @@ async function sendReminder(prefix){
   if (ANNOUNCE_CHAT) targets.add(String(ANNOUNCE_CHAT));
 
   for (const cid of targets) {
-    const items = getList(cid);
-    try {
-      if (isAllDone(items)) {
-        await reply(cid, `${prefix}🎉 Awesome — your list is complete!`);
-      } else if (items.length === 0) {
-        await reply(
-          cid,
-          `${prefix}Your list is empty. Tap ➕ Add to start.`,
-          buildKeyboard(items) // show controls row even when empty
-        );
-      } else {
-        await reply(
-          cid,
-          `${prefix}Keep going!\n\n${renderLines(items)}`,
-          buildKeyboard(items)
-        );
-      }
-    } catch (e) {
-      if (VERBOSE) console.warn('reminder send failed for', cid, e?.response?.body || e);
-    }
+    await sendReminderToChat(cid, prefix);
   }
 }
 
@@ -243,15 +295,10 @@ async function sendReminder(prefix){
 
     if (VERBOSE) console.log('ActiveChats:', [...ActiveChats]);
 
-    // 🔔 Hello + interactive list
+    // 🔔 Startup broadcasts (only to known chats / CHAT_ID)
     await broadcastAwake();
 
-    // 🔔 Immediate digest on wake (optional)
-    if (STARTUP_REMINDER) {
-      await sendReminder('🟢 Bot awake: ');
-    }
-
-    // Timed reminders
+    // Global timed reminders (relative to job start)
     if (DURATION_MINUTES <= 0 || DURATION_MINUTES > 20)
       setTimeout(()=> sendReminder('⏱️ 20 minutes gone. '), 20*60*1000);
     if (DURATION_MINUTES <= 0 || DURATION_MINUTES > 25)
