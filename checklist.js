@@ -9,10 +9,11 @@ if (!BOT_TOKEN) {
   process.exit(1);
 }
 
-// Config from env / dispatch
+// ===== Config from env / dispatch =====
 const VERBOSE = String(process.env.VERBOSE || 'false') === 'true';
 const ANNOUNCE_CHAT = process.env.CHAT_ID || null;
 const DURATION_MINUTES = Number(process.env.DURATION_MINUTES || 30); // 0 = no auto-stop
+const STARTUP_REMINDER = String(process.env.STARTUP_REMINDER || 'true') === 'true';
 
 // Create bot WITHOUT polling first; we will delete webhook, then start polling explicitly.
 const bot = new TelegramBot(BOT_TOKEN, { polling: false });
@@ -138,6 +139,10 @@ bot.on('polling_error', (err)=>{
 
 // ======= Reminders / Awake =======
 async function broadcastAwake() {
+  // ✅ define the targets set (this was missing and crashed your code)
+  const targets = new Set(ActiveChats);
+  if (ANNOUNCE_CHAT) targets.add(String(ANNOUNCE_CHAT));
+
   for (const cid of targets) {
     try {
       await reply(cid, '👋 Hello! The bot is awake. Use /list or the buttons below.');
@@ -145,12 +150,6 @@ async function broadcastAwake() {
     } catch (e) { if (VERBOSE) console.warn('awake send failed for', cid, e?.response?.body || e); }
   }
 }
-
-await broadcastAwake();                 // hello + list
-if (STARTUP_REMINDER) {
-  await sendReminder('🟢 Bot awake: '); // second message with praise/empty prompt/etc.
-}
-
 
 async function sendReminder(prefix){
   const targets = new Set(ActiveChats);
@@ -203,9 +202,15 @@ async function sendReminder(prefix){
 
     if (VERBOSE) console.log('ActiveChats:', [...ActiveChats]);
 
+    // 🔔 Hello + interactive list
     await broadcastAwake();
 
-    // Timed reminders only if duration suggests they make sense
+    // 🔔 Immediate digest on wake (optional)
+    if (STARTUP_REMINDER) {
+      await sendReminder('🟢 Bot awake: ');
+    }
+
+    // Timed reminders
     if (DURATION_MINUTES <= 0 || DURATION_MINUTES > 20)
       setTimeout(()=> sendReminder('⏱️ 20 minutes gone. '), 20*60*1000);
     if (DURATION_MINUTES <= 0 || DURATION_MINUTES > 25)
