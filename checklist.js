@@ -18,6 +18,11 @@ const STARTUP_REMINDER = String(process.env.STARTUP_REMINDER || 'true') === 'tru
 // Create bot WITHOUT polling first; we will delete webhook, then start polling explicitly.
 const bot = new TelegramBot(BOT_TOKEN, { polling: false });
 
+// Put near the top, after you create `bot`:
+const cmdRe = (name, hasArg = false) =>
+  new RegExp(`^\\/${name}(?:@\\w+)?${hasArg ? "\\s+(.+)" : "\\s*$"}`, "i");
+
+
 // ======= Persistence =======
 const DATA_PATH = path.resolve(__dirname, 'checklists.json');
 function loadData() {
