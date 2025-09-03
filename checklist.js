@@ -147,14 +147,30 @@ async function broadcastAwake() {
   }
 }
 async function sendReminder(prefix){
-  const targets = new Set(ActiveChats); if (ANNOUNCE_CHAT) targets.add(String(ANNOUNCE_CHAT));
+  const targets = new Set(ActiveChats);
+  if (ANNOUNCE_CHAT) targets.add(String(ANNOUNCE_CHAT));
+
   for (const cid of targets) {
     const items = getList(cid);
-    try{
-      if (isAllDone(items)) await reply(cid, `${prefix}🎉 Awesome — your list is complete!`);
-      else if (items.length===0) await reply(cid, `${prefix}Your list is empty. Tap ➕ Add to start.`);
-      else await reply(cid, `${prefix}Keep going!\n\n${renderLines(items)}`, buildKeyboard(items));
-    }catch(e){ if (VERBOSE) console.warn('reminder send failed for', cid, e?.response?.body || e); }
+    try {
+      if (isAllDone(items)) {
+        await reply(cid, `${prefix}🎉 Awesome — your list is complete!`);
+      } else if (items.length === 0) {
+        await reply(
+          cid,
+          `${prefix}Your list is empty. Tap ➕ Add to start.`,
+          buildKeyboard(items)       // show controls row even when empty
+        );
+      } else {
+        await reply(
+          cid,
+          `${prefix}Keep going!\n\n${renderLines(items)}`,
+          buildKeyboard(items)
+        );
+      }
+    } catch (e) {
+      if (VERBOSE) console.warn('reminder send failed for', cid, e?.response?.body || e);
+    }
   }
 }
 
