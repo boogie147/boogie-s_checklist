@@ -14,6 +14,7 @@ const VERBOSE = String(process.env.VERBOSE || 'false') === 'true';
 const ANNOUNCE_CHAT = process.env.CHAT_ID || null;          // optional; can be empty
 const DURATION_MINUTES = Number(process.env.DURATION_MINUTES || 30); // 0 = no auto-stop
 const STARTUP_REMINDER = String(process.env.STARTUP_REMINDER || 'true') === 'true';
+const SLEEP_WARNING_SECONDS = Number(process.env.SLEEP_WARNING_SECONDS || 60); // warn this many seconds before sleep
 
 // Create bot WITHOUT polling first; we will delete webhook, then start polling explicitly.
 const bot = new TelegramBot(BOT_TOKEN, { polling: false });
@@ -52,7 +53,7 @@ function buildKeyboard(items) {
     { text: '🗑', callback_data: `rm:${i}` },
   ]));
   rows.push([{ text: '➕ Add', callback_data: 'add_prompt' },
-             { text: '🧹 Clear', callback_data: 'clear_all' },
+             { text: '🧹 Clear checks', callback_data: 'clear_checks' },
              { text: '🔄 Refresh', callback_data: 'refresh' }]);
   return { reply_markup: { inline_keyboard: rows } };
 }
@@ -79,6 +80,25 @@ async function refreshMessage(cid, mid){
   return edit(cid, mid, `<b>Your checklist</b>\n${renderLines(items)}`, buildKeyboard(items));
 }
 
+// === helpers for “clear checks” ===
+function uncheckAll(cid) {
+  const items = getList(cid);
+  let changed = false;
+  for (const it of items) {
+    if (it.done) { it.done = false; changed = true; }
+  }
+  return { changed, count: items.length };
+}
+function resetAllChatsChecks() {
+  let changed = false;
+  for (const cid of Object.keys(DB)) {
+    for (const it of DB[cid]) {
+      if (it.done) { it.done = false; changed = true; }
+    }
+  }
+  return changed;
+}
+
 // ===== Welcome-on-first-contact helpers =====
 const WelcomedThisRun = new Set();
 
@@ -96,9 +116,7 @@ async function sendReminderToChat(cid, prefix) {
 async function maybeWelcome(cid, newlyTracked) {
   if (WelcomedThisRun.has(cid)) return;
   WelcomedThisRun.add(cid);
-
-  // Persist the chat immediately so future runs can broadcast to it at startup
-  if (newlyTracked) saveData(DB);
+  if (newlyTracked) saveData(DB); // persist new chat
 
   await reply(cid, '👋 Hello! The bot is awake. Use /list or the buttons below.');
   await sendListInteractive(cid);
@@ -119,7 +137,6 @@ bot.onText(cmdRe('start'), async (msg) => {
   const newlyTracked = ensureChatTracked(cid);
   await maybeWelcome(cid, newlyTracked);
 
-  // Optional extra /start help (keep or remove if too chatty)
   await reply(
     cid,
     ['<b>Checklist Bot</b> is awake 👋',
@@ -128,7 +145,7 @@ bot.onText(cmdRe('start'), async (msg) => {
      '• /list',
      '• /done &lt;number&gt;',
      '• /remove &lt;number&gt;',
-     '• /clear'].join('\n'),
+     '• /clear  (uncheck all)'].join('\n'),
     buildKeyboard(getList(cid))
   );
 });
@@ -150,7 +167,6 @@ bot.onText(cmdRe('list'), async (msg) => {
   const cid = msg.chat.id;
   const newlyTracked = ensureChatTracked(cid);
   await maybeWelcome(cid, newlyTracked);
-
   await sendListInteractive(cid);
 });
 
@@ -188,14 +204,20 @@ bot.onText(cmdRe('remove', true), async (msg, m) => {
   }
 });
 
-// /clear
+// /clear  -> Uncheck all items (keep text)
 bot.onText(cmdRe('clear'), async (msg) => {
   const cid = msg.chat.id;
   const newlyTracked = ensureChatTracked(cid);
   await maybeWelcome(cid, newlyTracked);
 
-  DB[cid] = []; saveData(DB);
-  await reply(cid, 'Cleared your checklist.'); await sendListInteractive(cid);
+  const { changed, count } = uncheckAll(cid);
+  if (count === 0) {
+    await reply(cid, 'Nothing to clear — your list is empty.');
+  } else {
+    if (changed) { saveData(DB); }
+    await reply(cid, 'All checkmarks cleared. ⬜️');
+  }
+  await sendListInteractive(cid);
 });
 
 // Non-command text -> add item (works in 1:1 chats; in groups, privacy mode may block non-commands)
@@ -223,7 +245,7 @@ bot.on('callback_query', async (q)=>{
 
     if(action==='t'){ const i=parseInt(arg,10); if(!isNaN(i)&&items[i]) { items[i].done=!items[i].done; saveData(DB); } await refreshMessage(cid, mid); }
     else if(action==='rm'){ const i=parseInt(arg,10); if(!isNaN(i)&&items[i]) { const r=items.splice(i,1)[0]; saveData(DB); await reply(cid,`Removed: <b>${escapeHtml(r.text)}</b> 🗑️`);} await refreshMessage(cid, mid); }
-    else if(action==='clear_all'){ DB[cid]=[]; saveData(DB); await refreshMessage(cid, mid); }
+    else if(action==='clear_checks'){ const {changed} = uncheckAll(cid); if (changed) saveData(DB); await refreshMessage(cid, mid); }
     else if(action==='refresh'){ await refreshMessage(cid, mid); }
     else if(action==='add_prompt'){ await reply(cid, 'Send me the task text, and I will add it.'); }
 
@@ -244,7 +266,7 @@ if (VERBOSE) {
   bot.on('callback_query', (q) => console.log('callback from', q.message?.chat?.id, q.data));
 }
 
-// ======= Reminders / Awake =======
+// ======= Reminders / Awake / Sleep =======
 async function broadcastAwake() {
   const targets = new Set(ActiveChats);
   if (ANNOUNCE_CHAT) targets.add(String(ANNOUNCE_CHAT));
@@ -266,9 +288,23 @@ async function broadcastAwake() {
 async function sendReminder(prefix){
   const targets = new Set(ActiveChats);
   if (ANNOUNCE_CHAT) targets.add(String(ANNOUNCE_CHAT));
-
   for (const cid of targets) {
     await sendReminderToChat(cid, prefix);
+  }
+}
+
+// Warning before sleep (only to chats with unfinished items)
+async function sendSleepWarning(){
+  const targets = new Set(ActiveChats);
+  if (ANNOUNCE_CHAT) targets.add(String(ANNOUNCE_CHAT));
+
+  for (const cid of targets) {
+    const items = getList(cid);
+    if (items.length > 0 && !isAllDone(items)) {
+      await reply(cid, '⚠️ You have failed to complete your task, SM would like to see you in your office.');
+      // show current list to let user quickly finish
+      await sendListInteractive(cid);
+    }
   }
 }
 
@@ -304,15 +340,24 @@ async function sendReminder(prefix){
     if (DURATION_MINUTES <= 0 || DURATION_MINUTES > 25)
       setTimeout(()=> sendReminder('⏱️ 25 minutes gone. '), 25*60*1000);
 
-    // Optional auto-stop
+    // Optional auto-stop + warning + reset checks
     if (DURATION_MINUTES > 0) {
+      const sleepMs = DURATION_MINUTES * 60 * 1000;
+      const warnMs = sleepMs - (SLEEP_WARNING_SECONDS * 1000);
+      if (warnMs > 0) {
+        setTimeout(sendSleepWarning, warnMs);
+      }
+
       setTimeout(async ()=>{
         console.log(`⏱️ ${DURATION_MINUTES} minutes elapsed — stopping bot.`);
+        // Reset all checkmarks for next run
+        if (resetAllChatsChecks()) {
+          saveData(DB);
+        }
         try { await bot.stopPolling(); } catch {}
-        saveData(DB);
         clearInterval(HEARTBEAT);
         process.exit(0);
-      }, DURATION_MINUTES * 60 * 1000);
+      }, sleepMs);
     } else {
       console.log('🟢 Auto-stop disabled (DURATION_MINUTES=0).');
     }
@@ -324,5 +369,5 @@ async function sendReminder(prefix){
 })();
 
 // Persist on shutdown
-process.on('SIGTERM', ()=> { try { saveData(DB); } catch {} clearInterval(HEARTBEAT); process.exit(0); });
-process.on('SIGINT',  ()=> { try { saveData(DB); } catch {} clearInterval(HEARTBEAT); process.exit(0); });
+process.on('SIGTERM', ()=> { try { if (resetAllChatsChecks()) saveData(DB); } catch {} clearInterval(HEARTBEAT); process.exit(0); });
+process.on('SIGINT',  ()=> { try { if (resetAllChatsChecks()) saveData(DB); } catch {} clearInterval(HEARTBEAT); process.exit(0); });
