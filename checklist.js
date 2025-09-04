@@ -16,7 +16,7 @@ const DURATION_MINUTES = Number(process.env.DURATION_MINUTES || 30); // 0 = no a
 const SLEEP_WARNING_SECONDS = Number(process.env.SLEEP_WARNING_SECONDS || 60); // warn before sleep
 const ADD_REQUIRE_ALLOWLIST = String(process.env.ADD_REQUIRE_ALLOWLIST || 'true') === 'true';
 // Anti-spam: ignore rapid button taps from same user in same chat within this gap (ms)
-const SPAM_GAP_MS = Number(process.env.SPAM_GAP_MS || 10000);
+const SPAM_GAP_MS = Number(process.env.SPAM_GAP_MS || 3000);
 
 // Create bot WITHOUT polling first; we will delete webhook, then start polling explicitly.
 const bot = new TelegramBot(BOT_TOKEN, { polling: false });
