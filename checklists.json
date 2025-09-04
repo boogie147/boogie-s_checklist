@@ -2,31 +2,31 @@
   "6171407541": [
     {
       "text": "Clear trash",
-      "done": false
+      "done": true
     },
     {
       "text": "Ensure tidiness in office",
-      "done": false
+      "done": true
     },
     {
       "text": "Clear desk policy (inclusive of clearing of shredding tray)",
-      "done": false
+      "done": true
     },
     {
       "text": "Make sure all keys are accounted for in keypress",
-      "done": false
+      "done": true
     },
     {
       "text": "Make sure keypress book is closed properly before HOTO",
-      "done": false
+      "done": true
     },
     {
       "text": "Update attendance list",
-      "done": false
+      "done": true
     },
     {
       "text": "Update ration status in COS chat for every meal",
-      "done": false
+      "done": true
     }
   ],
   "5133208886": []
