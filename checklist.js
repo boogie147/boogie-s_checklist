@@ -13,9 +13,10 @@ if (!BOT_TOKEN) {
 const VERBOSE = String(process.env.VERBOSE || 'false') === 'true';
 const ANNOUNCE_CHAT = process.env.CHAT_ID || null; // optional; can be empty
 const DURATION_MINUTES = Number(process.env.DURATION_MINUTES || 30); // 0 = no auto-stop
-const STARTUP_REMINDER = String(process.env.STARTUP_REMINDER || 'true') === 'true';
 const SLEEP_WARNING_SECONDS = Number(process.env.SLEEP_WARNING_SECONDS || 60); // warn before sleep
-const ADD_REQUIRE_ALLOWLIST = String(process.env.ADD_REQUIRE_ALLOWLIST || 'true') === 'true'; // <— NEW
+const ADD_REQUIRE_ALLOWLIST = String(process.env.ADD_REQUIRE_ALLOWLIST || 'true') === 'true';
+// Anti-spam: ignore rapid button taps from same user in same chat within this gap (ms)
+const SPAM_GAP_MS = Number(process.env.SPAM_GAP_MS || 800);
 
 // Create bot WITHOUT polling first; we will delete webhook, then start polling explicitly.
 const bot = new TelegramBot(BOT_TOKEN, { polling: false });
@@ -37,27 +38,19 @@ function saveData(obj) {
 let DB = loadData();
 
 /**
- * We now support two shapes for DB[chatId] for backward compat:
+ * DB[chatId] structure (backward compatible):
  * - OLD: Array of items
  * - NEW: { items: [...], allow: [userId, ...] }
  */
 function getState(cid) {
   let v = DB[cid];
-  if (!v) {
-    v = { items: [], allow: [] };
-    DB[cid] = v;
-    return v;
-  }
-  if (Array.isArray(v)) {
-    v = { items: v, allow: [] };
-    DB[cid] = v;
-    return v;
-  }
+  if (!v) { v = { items: [], allow: [] }; DB[cid] = v; return v; }
+  if (Array.isArray(v)) { v = { items: v, allow: [] }; DB[cid] = v; return v; }
   if (!Array.isArray(v.items)) v.items = [];
   if (!Array.isArray(v.allow)) v.allow = [];
   return v;
 }
-const getList = (cid) => getState(cid).items;
+const getList  = (cid) => getState(cid).items;
 const getAllow = (cid) => getState(cid).allow;
 
 const ActiveChats = new Set(Object.keys(DB));
@@ -159,6 +152,15 @@ function formatUser(u) {
 // ===== Welcome-on-first-contact helpers =====
 const WelcomedThisRun = new Set();
 
+async function maybeWelcome(cid, newlyTracked) {
+  if (WelcomedThisRun.has(cid)) return;
+  WelcomedThisRun.add(cid);
+  if (newlyTracked) saveData(DB); // persist new chat
+
+  await reply(cid, '👋 Hello! The bot is awake. Use /list or the buttons below.');
+  await sendListInteractive(cid);
+}
+
 async function sendReminderToChat(cid, prefix) {
   const items = getList(cid);
   if (isAllDone(items)) {
@@ -167,18 +169,6 @@ async function sendReminderToChat(cid, prefix) {
     await reply(cid, `${prefix}Your list is empty. Tap ➕ Add to start.`, buildKeyboard(items));
   } else {
     await reply(cid, `${prefix}Keep going!\n\n${renderLines(items)}`, buildKeyboard(items));
-  }
-}
-
-async function maybeWelcome(cid, newlyTracked) {
-  if (WelcomedThisRun.has(cid)) return;
-  WelcomedThisRun.add(cid);
-  if (newlyTracked) saveData(DB); // persist new chat
-
-  await reply(cid, '👋 Hello! The bot is awake. Use /list or the buttons below.');
-  await sendListInteractive(cid);
-  if (STARTUP_REMINDER) {
-    await sendReminderToChat(cid, '🟢 Bot awake: ');
   }
 }
 
@@ -285,7 +275,6 @@ bot.onText(cmdRe('clear'), async (msg) => {
 });
 
 // Allowlist admin commands (reply-based)
-// /allow  — admin replies to a user's message to grant add permission
 bot.onText(cmdRe('allow'), async (msg) => {
   const cid = msg.chat.id;
   if (!(await isAdmin(cid, msg.from.id))) return reply(cid, 'Only admins can use /allow.');
@@ -299,8 +288,6 @@ bot.onText(cmdRe('allow'), async (msg) => {
   }
   await reply(cid, `✅ Allowed: ${formatUser(target)}`);
 });
-
-// /deny — admin replies to revoke add permission
 bot.onText(cmdRe('deny'), async (msg) => {
   const cid = msg.chat.id;
   if (!(await isAdmin(cid, msg.from.id))) return reply(cid, 'Only admins can use /deny.');
@@ -317,15 +304,10 @@ bot.onText(cmdRe('deny'), async (msg) => {
     await reply(cid, `${formatUser(target)} was not on the allowlist.`);
   }
 });
-
-// /whoallowed — list current allowlist
 bot.onText(cmdRe('whoallowed'), async (msg) => {
   const cid = msg.chat.id;
   const allow = getAllow(cid);
-  if (allow.length === 0) {
-    return reply(cid, 'No one is on the allowlist yet.');
-  }
-  // Attempt to resolve names (best effort)
+  if (allow.length === 0) return reply(cid, 'No one is on the allowlist yet.');
   const lines = [];
   for (const uid of allow) {
     try {
@@ -339,8 +321,7 @@ bot.onText(cmdRe('whoallowed'), async (msg) => {
   await reply(cid, `<b>Allowlist</b>\n${lines.join('\n')}`);
 });
 
-// Non-command text -> add item
-// Works in private chats; in groups with Privacy ON, this triggers only if user REPLIES to the bot's message.
+// Non-command text -> add item (private chats; in groups, only if replying to the bot)
 bot.on('message', async (msg) => {
   if (!msg.text) return;
   if (/^\/(start|add|list|done|remove|clear|allow|deny|whoallowed)/i.test(msg.text)) return;
@@ -349,11 +330,8 @@ bot.on('message', async (msg) => {
   const newlyTracked = ensureChatTracked(cid);
   await maybeWelcome(cid, newlyTracked);
 
-  // In groups, only process if it's a reply to the bot (Privacy Mode compatible)
   if (msg.chat.type !== 'private') {
-    if (!(msg.reply_to_message && msg.reply_to_message.from && msg.reply_to_message.from.id === SELF_ID)) {
-      return;
-    }
+    if (!(msg.reply_to_message && msg.reply_to_message.from && msg.reply_to_message.from.id === SELF_ID)) return;
   }
 
   if (!(await canUserAdd(msg))) {
@@ -365,12 +343,25 @@ bot.on('message', async (msg) => {
   await reply(cid, `Added: <b>${escapeHtml(t)}</b>`); await sendListInteractive(cid);
 });
 
+// ===== Anti-spam for inline buttons =====
+const tapLimiter = new Map(); // key `${cid}:${uid}` -> lastTs
+
 // Inline buttons
 bot.on('callback_query', async (q) => {
   try {
     const cid = q.message.chat.id; const mid = q.message.message_id;
     const newlyTracked = ensureChatTracked(cid);
     await maybeWelcome(cid, newlyTracked);
+
+    // Throttle per user per chat
+    const key = `${cid}:${q.from.id}`;
+    const now = Date.now();
+    const last = tapLimiter.get(key) || 0;
+    if (now - last < SPAM_GAP_MS) {
+      await bot.answerCallbackQuery(q.id, { text: 'Please wait…', show_alert: false });
+      return;
+    }
+    tapLimiter.set(key, now);
 
     const items = getList(cid);
     const [action, arg] = (q.data || '').split(':');
@@ -392,12 +383,10 @@ bot.on('callback_query', async (q) => {
     } else if (action === 'refresh') {
       await refreshMessage(cid, mid);
     } else if (action === 'add_prompt') {
-      // Permission check for add
       const fakeMsg = { chat: { id: cid, type: q.message.chat.type }, from: q.from };
       if (!(await canUserAdd(fakeMsg))) {
         await reply(cid, `🚫 You are not allowed to add tasks in this chat.`);
       } else {
-        // Force reply works in groups with Privacy ON (bot will see replies to THIS message)
         await bot.sendMessage(cid, 'Send the task text as a reply to this message.', {
           reply_markup: { force_reply: true },
         });
@@ -433,9 +422,7 @@ async function broadcastAwake() {
     try {
       await reply(cid, '👋 Hello! The bot is awake. Use /list or the buttons below.');
       await sendListInteractive(cid);
-      if (STARTUP_REMINDER) {
-        await sendReminderToChat(cid, '🟢 Bot awake: ');
-      }
+      // (Removed the “awake reminder” on purpose)
     } catch (e) { console.warn('awake send failed for', cid, e?.response?.body || e); }
   }
 }
@@ -486,7 +473,7 @@ async function sendSleepWarning() {
 
     if (VERBOSE) console.log('ActiveChats:', [...ActiveChats]);
 
-    // 🔔 Startup broadcasts (only to known chats / CHAT_ID)
+    // 🔔 Startup hello (no “awake reminder”)
     await broadcastAwake();
 
     // Global timed reminders (relative to job start)
