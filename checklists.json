@@ -1,33 +1,72 @@
 {
-  "6171407541": [
-    {
-      "text": "Clear trash",
-      "done": true
-    },
-    {
-      "text": "Ensure tidiness in office",
-      "done": true
-    },
-    {
-      "text": "Clear desk policy (inclusive of clearing of shredding tray)",
-      "done": true
-    },
-    {
-      "text": "Make sure all keys are accounted for in keypress",
-      "done": true
-    },
-    {
-      "text": "Make sure keypress book is closed properly before HOTO",
-      "done": true
-    },
-    {
-      "text": "Update attendance list",
-      "done": true
-    },
-    {
-      "text": "Update ration status in COS chat for every meal",
-      "done": true
-    }
-  ],
-  "5133208886": []
+  "6171407541": {
+    "items": [
+      {
+        "text": "Clear trash",
+        "done": false
+      },
+      {
+        "text": "Ensure tidiness in office",
+        "done": false
+      },
+      {
+        "text": "Clear desk policy (inclusive of clearing of shredding tray)",
+        "done": false
+      },
+      {
+        "text": "Make sure all keys are accounted for in keypress",
+        "done": false
+      },
+      {
+        "text": "Make sure keypress book is closed properly before HOTO",
+        "done": false
+      },
+      {
+        "text": "Update attendance list",
+        "done": false
+      },
+      {
+        "text": "Update ration status in COS chat for every meal",
+        "done": false
+      }
+    ],
+    "allow": []
+  },
+  "5133208886": {
+    "items": [],
+    "allow": []
+  },
+  "-1002768068819": {
+    "items": [
+      {
+        "text": "Update ration status in COS chat for every meal",
+        "done": false
+      },
+      {
+        "text": "Update attendance list",
+        "done": false
+      },
+      {
+        "text": "Make sure keypress book is closed properly before HOTO",
+        "done": false
+      },
+      {
+        "text": "Make sure all keys are accounted for in keypress",
+        "done": false
+      },
+      {
+        "text": "Clear desk policy (inclusive of clearing of shredding tray)",
+        "done": false
+      },
+      {
+        "text": "Ensure tidiness in office",
+        "done": false
+      },
+      {
+        "text": "Clear trash",
+        "done": false
+      }
+    ],
+    "allow": []
+  }
 }
