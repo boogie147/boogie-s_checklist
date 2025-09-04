@@ -15,8 +15,10 @@ const ANNOUNCE_CHAT = process.env.CHAT_ID || null; // optional; can be empty
 const DURATION_MINUTES = Number(process.env.DURATION_MINUTES || 30); // 0 = no auto-stop
 const SLEEP_WARNING_SECONDS = Number(process.env.SLEEP_WARNING_SECONDS || 60); // warn before sleep
 const ADD_REQUIRE_ALLOWLIST = String(process.env.ADD_REQUIRE_ALLOWLIST || 'true') === 'true';
-// Anti-spam: ignore rapid button taps from same user in same chat within this gap (ms)
-const SPAM_GAP_MS = Number(process.env.SPAM_GAP_MS || 3000);
+// Anti-spam (kept for safety): ignore rapid button taps per user/chat (ms)
+const SPAM_GAP_MS = Number(process.env.SPAM_GAP_MS || 800);
+// NEW: drop any pending updates that arrived while the bot was asleep
+const DROP_PENDING = String(process.env.DROP_PENDING || 'true') === 'true';
 
 // Create bot WITHOUT polling first; we will delete webhook, then start polling explicitly.
 const bot = new TelegramBot(BOT_TOKEN, { polling: false });
@@ -343,7 +345,7 @@ bot.on('message', async (msg) => {
   await reply(cid, `Added: <b>${escapeHtml(t)}</b>`); await sendListInteractive(cid);
 });
 
-// ===== Anti-spam for inline buttons =====
+// ===== Anti-spam for inline buttons (kept) =====
 const tapLimiter = new Map(); // key `${cid}:${uid}` -> lastTs
 
 // Inline buttons
@@ -422,7 +424,7 @@ async function broadcastAwake() {
     try {
       await reply(cid, '👋 Hello! The bot is awake. Use /list or the buttons below.');
       await sendListInteractive(cid);
-      // (Removed the “awake reminder” on purpose)
+      // (No extra “awake reminder” on purpose)
     } catch (e) { console.warn('awake send failed for', cid, e?.response?.body || e); }
   }
 }
@@ -456,10 +458,10 @@ async function sendSleepWarning() {
     SELF_ID = me.id;
     console.log(`🤖 Bot @${me.username} (ID ${me.id}) starting…`);
 
-    // Clear webhook so polling can work
+    // Clear webhook so polling can work; DROP old updates so offline taps/msgs are discarded
     try {
-      await bot.deleteWebHook({ drop_pending_updates: false });
-      console.log('✅ Webhook cleared.');
+      await bot.deleteWebHook({ drop_pending_updates: DROP_PENDING });
+      console.log(`✅ Webhook cleared. (drop_pending_updates=${DROP_PENDING})`);
     } catch (e) {
       console.warn('⚠️ deleteWebHook failed (continuing):', e?.response?.body || e);
     }
@@ -486,16 +488,12 @@ async function sendSleepWarning() {
     if (DURATION_MINUTES > 0) {
       const sleepMs = DURATION_MINUTES * 60 * 1000;
       const warnMs = sleepMs - (SLEEP_WARNING_SECONDS * 1000);
-      if (warnMs > 0) {
-        setTimeout(sendSleepWarning, warnMs);
-      }
+      if (warnMs > 0) setTimeout(sendSleepWarning, warnMs);
 
       setTimeout(async () => {
         console.log(`⏱️ ${DURATION_MINUTES} minutes elapsed — stopping bot.`);
         // Reset all checkmarks for next run
-        if (resetAllChatsChecks()) {
-          saveData(DB);
-        }
+        if (resetAllChatsChecks()) saveData(DB);
         try { await bot.stopPolling(); } catch {}
         clearInterval(HEARTBEAT);
         process.exit(0);
