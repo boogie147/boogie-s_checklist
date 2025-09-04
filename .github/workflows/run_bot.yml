@@ -62,6 +62,7 @@ jobs:
       - name: Run bot (interactive for duration)
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          DROP_PENDING: 'true'
           # Prefer input when dispatched manually; otherwise fall back to secrets or leave empty
           CHAT_ID: ${{ github.event.inputs.announce_chat_id != '' && github.event.inputs.announce_chat_id || secrets.CHAT_ID }}
           DURATION_MINUTES: ${{ github.event.inputs.duration_minutes != '' && github.event.inputs.duration_minutes || '30' }}
