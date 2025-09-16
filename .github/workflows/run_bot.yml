@@ -2,8 +2,8 @@ name: Run Telegram Checklist Bot
 
 on:
   schedule:
-    - cron: '30 1 * * *'   # 09:30 AM SGT
-    - cron: '*  8 * * *'   # 04:00 PM SGT
+    - cron: '30 1 * * *'  # 09:30 AM SGT (01:30 UTC)
+    - cron: '0 8 * * *'   # 04:00 PM SGT (08:00 UTC)
   workflow_dispatch:
     inputs:
       duration_minutes:
@@ -23,12 +23,16 @@ on:
         required: false
         default: "false"
 
+concurrency:
+  group: checklist-bot
+  cancel-in-progress: true
+
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 30    # buffer above duration
+    timeout-minutes: 40
     permissions:
-      contents: write      # needed to push checklists.json back to main
+      contents: write
 
     steps:
       - name: Checkout repository
@@ -58,18 +62,15 @@ jobs:
             echo "Initialized new checklists.json."
           fi
 
-      # === Run bot ===
       - name: Run bot (interactive for duration)
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           DROP_PENDING: 'true'
-          # Prefer input when dispatched manually; otherwise fall back to secrets or leave empty
-          CHAT_ID: ${{ github.event.inputs.announce_chat_id != '' && github.event.inputs.announce_chat_id || secrets.CHAT_ID }}
-          DURATION_MINUTES: ${{ github.event.inputs.duration_minutes != '' && github.event.inputs.duration_minutes || '30' }}
-          VERBOSE: ${{ github.event.inputs.verbose }}
+          CHAT_ID: ${{ github.event.inputs.announce_chat_id || secrets.CHAT_ID }}
+          DURATION_MINUTES: ${{ github.event.inputs.duration_minutes || '30' }}
+          VERBOSE: ${{ github.event.inputs.verbose || 'false' }}
         run: node checklist.js
 
-      # === Commit results ===
       - name: Commit and push updated checklist
         if: ${{ github.event.inputs.skip_commit != 'true' }}
         shell: bash
