@@ -3,7 +3,7 @@ name: Run Telegram Checklist Bot
 on:
   schedule:
     - cron: '30 1 * * *'   # 09:30 AM SGT
-    - cron: '20 7 * * *'   # 03:20 PM SGT
+    - cron: '*  8 * * *'   # 04:00 PM SGT
   workflow_dispatch:
     inputs:
       duration_minutes:
