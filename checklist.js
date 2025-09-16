@@ -481,9 +481,9 @@ async function sendSleepWarning() {
     // Global timed reminders (relative to job start)
     const durMs = DURATION_MINUTES * 60 * 1000;
     
-    if (DURATION_MINUTES <= 0 || durMS > 5 * 60 * 1000)
+    if (DURATION_MINUTES <= 0 || durMs > 5 * 60 * 1000)
       setTimeout(() => sendReminder('⏱️ 5 minutes gone. '), 5 * 60 * 1000);
-    if (DURATION_MINUTES <= 0 || durMS > 10 * 60 * 1000)
+    if (DURATION_MINUTES <= 0 || durMs > 10 * 60 * 1000)
       setTimeout(() => sendReminder('⏱️ 10 minutes gone. '), 10 * 60 * 1000);
 
     // Optional auto-stop + warning + reset checks
