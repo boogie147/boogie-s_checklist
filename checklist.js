@@ -373,4 +373,208 @@ bot.on('message', async (msg) => {
 
   // Add via ForceReply
   if (msg.reply_to_message && /Send the task text:/.test(msg.reply_to_message.text || '')) {
-    i
+    if (!(await canUserAdd(msg))) return bot.sendMessage(cid, `🚫 You are not allowed to add tasks in this chat.`);
+    const t = msg.text.trim(); if (!t) return;
+    getList(cid).push({ text: t, done: false }); saveData(DB);
+    await bot.sendMessage(cid, `Added: <b>${escapeHtml(t)}</b>`, { parse_mode:'HTML' });
+    await sendListInteractive(cid);
+    return;
+  }
+
+  // Remove mode: accept numbers / ranges
+  if (isRemoveMode(cid)) {
+    const raw = msg.text.replace(/\s+/g,'');
+    // patterns like "2", "1-3", "1,4,6", "1-2,5"
+    if (/^\d+([,-]\d+)*(\-\d+)?$/.test(raw)) {
+      const toRemove = new Set();
+      for (const part of raw.split(',')) {
+        if (part.includes('-')) {
+          const [a,b] = part.split('-').map(x=>parseInt(x,10));
+          if (!isNaN(a) && !isNaN(b)) {
+            const lo = Math.min(a,b), hi = Math.max(a,b);
+            for (let k=lo; k<=hi; k++) toRemove.add(k);
+          }
+        } else {
+          const n = parseInt(part,10);
+          if (!isNaN(n)) toRemove.add(n);
+        }
+      }
+      const items = getList(cid);
+      const idxs = [...toRemove]
+        .map(n => n-1)
+        .filter(i => i>=0 && i<items.length)
+        .sort((a,b)=>b-a); // delete from end
+      if (idxs.length === 0) {
+        await bot.sendMessage(cid, 'No matching item numbers to remove.');
+      } else {
+        const removed = [];
+        for (const i of idxs) {
+          removed.push(items.splice(i,1)[0]?.text);
+        }
+        saveData(DB);
+        await bot.sendMessage(cid, `Removed ${idxs.length} item(s).`);
+        await sendListInteractive(cid);
+      }
+      return;
+    }
+    // fallthrough if not valid pattern; ignore to avoid accidental deletes
+  }
+
+  // In groups: only add free text when replying to the bot
+  if (msg.chat.type !== 'private') {
+    if (!(msg.reply_to_message && msg.reply_to_message.from && msg.reply_to_message.from.id === SELF_ID)) return;
+  }
+
+  // Free-text add (if allowed)
+  if (!(await canUserAdd(msg))) return bot.sendMessage(cid, `🚫 You are not allowed to add tasks in this chat.`);
+  const t = msg.text.trim(); if (!t) return;
+  getList(cid).push({ text:t, done:false }); saveData(DB);
+  await bot.sendMessage(cid, `Added: <b>${escapeHtml(t)}</b>`, { parse_mode:'HTML' });
+  await sendListInteractive(cid);
+});
+
+// ===== Anti-spam for inline buttons =====
+const tapLimiter = new Map(); // key `${cid}:${uid}` -> lastTs
+
+// Inline buttons (per-item)
+bot.on('callback_query', async (q) => {
+  try{
+    const cid = q.message.chat.id; const mid = q.message.message_id;
+    ensureChatTracked(cid); // not welcoming here
+
+    // Throttle per user per chat
+    const key = `${cid}:${q.from.id}`;
+    const now = Date.now();
+    const last = tapLimiter.get(key) || 0;
+    if (now - last < SPAM_GAP_MS) {
+      await bot.answerCallbackQuery(q.id, { text: 'Please wait…', show_alert: false });
+      return;
+    }
+    tapLimiter.set(key, now);
+
+    const items = getList(cid);
+    const [action,arg] = (q.data||'').split(':');
+
+    if(action==='t'){
+      const i=parseInt(arg,10);
+      if(!isNaN(i)&&items[i]) { items[i].done=!items[i].done; saveData(DB); }
+      await refreshInlineMessage(cid, mid);
+    } else if(action==='rm'){
+      const i=parseInt(arg,10);
+      if(!isNaN(i)&&items[i]) {
+        const r=items.splice(i,1)[0]; saveData(DB);
+        await bot.sendMessage(cid, `Removed: <b>${escapeHtml(r.text)}</b> 🗑️`, { parse_mode:'HTML' });
+      }
+      await refreshInlineMessage(cid, mid);
+    }
+
+    await bot.answerCallbackQuery(q.id);
+  }catch(e){
+    console.error('callback error:', e?.response?.body || e);
+    try{ await bot.answerCallbackQuery(q.id); }catch{}
+  }
+});
+
+// Polling error visibility (do NOT exit)
+bot.on('polling_error', (err)=>{ console.error('polling_error:', err?.response?.body || err); });
+
+if (VERBOSE) {
+  bot.on('message', (m) => console.log('msg from', m.chat?.id, m.text));
+  bot.on('callback_query', (q) => console.log('callback from', q.message?.chat?.id, q.data));
+}
+
+// ======= Reminders / Awake / Sleep =======
+async function broadcastAwake() {
+  const targets = new Set(ActiveChats);
+  if (ANNOUNCE_CHAT) targets.add(String(ANNOUNCE_CHAT));
+
+  if (VERBOSE) console.log('broadcast targets:', [...targets]);
+  if (targets.size === 0) console.log('No targets to notify (ActiveChats empty and CHAT_ID not set).');
+
+  for (const cid of targets) {
+    try {
+      await bot.sendMessage(cid, '👋 The bot is awake.');
+      await sendListInteractive(cid);
+    } catch (e) { console.warn('awake send failed for', cid, e?.response?.body || e); }
+  }
+}
+
+async function sendReminder(prefix) {
+  const targets = new Set(ActiveChats);
+  if (ANNOUNCE_CHAT) targets.add(String(ANNOUNCE_CHAT));
+  if (VERBOSE) console.log('sendReminder targets:', [...targets]);
+  for (const cid of targets) {
+    try { await bot.sendMessage(cid, `${prefix}`); await sendListInteractive(cid); }
+    catch (e) { console.error('sendReminder error for', cid, e?.response?.body || e); }
+  }
+}
+
+// Generic “going to sleep soon” notice
+async function sendSleepWarning() {
+  const targets = new Set(ActiveChats);
+  if (ANNOUNCE_CHAT) targets.add(String(ANNOUNCE_CHAT));
+  for (const cid of targets) {
+    try {
+      await bot.sendMessage(cid, '😴 The bot is going to sleep soon.');
+      await ensureReplyKeyboardShown(cid);
+    } catch {}
+  }
+}
+
+// ======= Startup =======
+(async function main(){
+  try {
+    const me = await bot.getMe();
+    SELF_ID = me.id;
+    console.log(`🤖 Bot @${me.username} (ID ${me.id}) starting…`);
+
+    if (ANNOUNCE_CHAT) ensureChatTracked(ANNOUNCE_CHAT);
+
+    try {
+      await bot.deleteWebHook({ drop_pending_updates: DROP_PENDING });
+      console.log(`✅ Webhook cleared. (drop_pending_updates=${DROP_PENDING})`);
+    } catch (e) {
+      console.warn('⚠️ deleteWebHook failed (continuing):', e?.response?.body || e);
+    }
+
+    await bot.startPolling({
+      interval: 300,
+      params: { timeout: 50, allowed_updates: ['message','callback_query'] },
+    });
+    console.log('📡 Polling started.');
+
+    if (VERBOSE) console.log('ActiveChats:', [...ActiveChats]);
+
+    // Hello
+    await broadcastAwake();
+
+    // Reminders (adjust to your taste)
+    const durMs = DURATION_MINUTES * 60 * 1000;
+    setTimeout(() => sendReminder('⏱️ 20 minutes gone.'), 20 * 60 * 1000);
+    setTimeout(() => sendReminder('⏱️ 25 minutes gone.'), 25 * 60 * 1000);
+
+    // Auto-stop + warning + reset checks
+    if (DURATION_MINUTES > 0) {
+      const warnMs = Math.max(0, durMs - (SLEEP_WARNING_SECONDS * 1000));
+      if (warnMs > 0) setTimeout(() => { console.log('⏰ Sleep warning firing…'); sendSleepWarning(); }, warnMs);
+
+      setTimeout(async () => {
+        console.log(`⏱️ ${DURATION_MINUTES} minutes elapsed — stopping bot.`);
+        if (resetAllChatsChecks()) saveData(DB);
+        try { await bot.stopPolling(); } catch {}
+        clearInterval(HEARTBEAT);
+        process.exit(0);
+      }, durMs);
+    } else {
+      console.log('🟢 Auto-stop disabled (DURATION_MINUTES=0).');
+    }
+
+  } catch (e) {
+    console.error('❌ Fatal startup error:', e?.response?.body || e);
+    process.exit(1);
+  }
+})();
+
+// Persist on shutdown
+process.on('SIGTERM', ()=> { try { if (resetAllChatsChecks()) saveData(DB); } catch {} clearInterval(HEARTBEAT); process.exit(0); });
+process.on('SIGINT',  ()=> { try { if (resetAllChatsChecks()) saveData(DB); } catch {} clearInterval(HEARTBEAT); process.exit(0); });
