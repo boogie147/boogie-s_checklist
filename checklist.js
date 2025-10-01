@@ -490,20 +490,20 @@ async function sendSleepWarning() {
     // Global timed reminders (relative to job start)
     const durMs = DURATION_MINUTES * 60 * 1000;
 
-    // Always schedule 5-min reminder
+    // Always schedule 25-min reminder
     setTimeout(() => {
-      console.log('⏰ 5-min reminder firing…');
-      sendReminder('⏱️ 5 minutes gone. ')
+      console.log('⏰ 25-min reminder firing…');
+      sendReminder('⏱️ 25 minutes gone. ')
         .catch(e => console.error('5-min reminder error:', e?.response?.body || e));
-    }, 5 * 60 * 1000);
+    }, 25 * 60 * 1000);
 
-    // Schedule 10-min only if run lasts ≥10 min (or unlimited)
+    // Schedule 30-min only if run lasts ≥10 min (or unlimited)
     if (DURATION_MINUTES <= 0 || durMs >= 10 * 60 * 1000) {
       setTimeout(() => {
-        console.log('⏰ 10-min reminder firing…');
-        sendReminder('⏱️ 10 minutes gone. ')
+        console.log('⏰ 30-min reminder firing…');
+        sendReminder('⏱️ 30 minutes gone. ')
           .catch(e => console.error('10-min reminder error:', e?.response?.body || e));
-      }, 10 * 60 * 1000);
+      }, 30 * 60 * 1000);
     }
 
     console.log(`ANNOUNCE_CHAT=${ANNOUNCE_CHAT || '(none)'}; ActiveChats:`, [...ActiveChats]);
