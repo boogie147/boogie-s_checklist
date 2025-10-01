@@ -34,7 +34,8 @@
   },
   "5133208886": {
     "items": [],
-    "allow": []
+    "allow": [],
+    "removeMode": false
   },
   "-1002768068819": {
     "items": [
@@ -67,6 +68,7 @@
         "done": false
       }
     ],
-    "allow": []
+    "allow": [],
+    "removeMode": false
   }
 }
