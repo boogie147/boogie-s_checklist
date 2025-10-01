@@ -2,8 +2,9 @@ name: Run Telegram Checklist Bot
 
 on:
   schedule:
-    - cron: '30 1 * * *'  # 09:30 AM SGT (01:30 UTC)
-    - cron: '0 8 * * *'   # 04:00 PM SGT (08:00 UTC)
+    # Weekdays only (Mon–Fri). Times are UTC:
+    - cron: '30 1 * * 1-5'  # 09:30 AM SGT (01:30 UTC)
+    - cron: '0 8 * * 1-5'   # 04:00 PM SGT (08:00 UTC)
   workflow_dispatch:
     inputs:
       duration_minutes:
@@ -66,7 +67,7 @@ jobs:
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           DROP_PENDING: 'true'
-          CHAT_ID: '${{ github.event.inputs.announce_chat_id || secrets.CHAT_ID }}'  # quoted for negative IDs
+          CHAT_ID: ${{ github.event.inputs.announce_chat_id || secrets.CHAT_ID }}
           DURATION_MINUTES: ${{ github.event.inputs.duration_minutes || '30' }}
           VERBOSE: ${{ github.event.inputs.verbose || 'false' }}
         run: node checklist.js
