@@ -441,16 +441,16 @@ async function sendReminder(prefix) {
   }
 }
 
-// Warning before sleep (only to chats with unfinished items)
+// Neutral sleep warning (no countdown text)
 async function sendSleepWarning() {
   const targets = new Set(ActiveChats);
   if (ANNOUNCE_CHAT) targets.add(String(ANNOUNCE_CHAT));
 
   for (const cid of targets) {
-    const items = getList(cid);
-    if (items.length > 0 && !isAllDone(items)) {
-      await reply(cid, '⚠️ You have failed to complete your task, SM would like to see you in your office.');
-      await sendListInteractive(cid);
+    try {
+      await reply(cid, `😴 The bot is going to sleep.`);
+    } catch (e) {
+      console.error('sleepWarning error for', cid, e?.response?.body || e);
     }
   }
 }
@@ -490,20 +490,22 @@ async function sendSleepWarning() {
     // Global timed reminders (relative to job start)
     const durMs = DURATION_MINUTES * 60 * 1000;
 
-    // Always schedule 25-min reminder
-    setTimeout(() => {
-      console.log('⏰ 25-min reminder firing…');
-      sendReminder('⏱️ 25 minutes gone. ')
-        .catch(e => console.error('5-min reminder error:', e?.response?.body || e));
-    }, 25 * 60 * 1000);
-
-    // Schedule 30-min only if run lasts ≥10 min (or unlimited)
-    if (DURATION_MINUTES <= 0 || durMs >= 10 * 60 * 1000) {
+    // 20-min reminder (if run lasts ≥20 min or unlimited)
+    if (DURATION_MINUTES <= 0 || durMs >= 20 * 60 * 1000) {
       setTimeout(() => {
-        console.log('⏰ 30-min reminder firing…');
-        sendReminder('⏱️ 30 minutes gone. ')
-          .catch(e => console.error('10-min reminder error:', e?.response?.body || e));
-      }, 30 * 60 * 1000);
+        console.log('⏰ 20-min reminder firing…');
+        sendReminder('⏱️ 20 minutes gone. ')
+          .catch(e => console.error('20-min reminder error:', e?.response?.body || e));
+      }, 20 * 60 * 1000);
+    }
+
+    // 25-min reminder (if run lasts ≥25 min or unlimited)
+    if (DURATION_MINUTES <= 0 || durMs >= 25 * 60 * 1000) {
+      setTimeout(() => {
+        console.log('⏰ 25-min reminder firing…');
+        sendReminder('⏱️ 25 minutes gone. ')
+          .catch(e => console.error('25-min reminder error:', e?.response?.body || e));
+      }, 25 * 60 * 1000);
     }
 
     console.log(`ANNOUNCE_CHAT=${ANNOUNCE_CHAT || '(none)'}; ActiveChats:`, [...ActiveChats]);
@@ -537,4 +539,3 @@ async function sendSleepWarning() {
 // Persist on shutdown
 process.on('SIGTERM', () => { try { if (resetAllChatsChecks()) saveData(DB); } catch {} clearInterval(HEARTBEAT); process.exit(0); });
 process.on('SIGINT',  () => { try { if (resetAllChatsChecks()) saveData(DB); } catch {} clearInterval(HEARTBEAT); process.exit(0); });
-
