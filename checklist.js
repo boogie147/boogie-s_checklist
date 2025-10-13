@@ -9,24 +9,21 @@ if (!BOT_TOKEN) {
   process.exit(1);
 }
 
-// ===== Config from env / dispatch =====
+// ===== Config =====
 const VERBOSE = String(process.env.VERBOSE || 'false') === 'true';
 const ANNOUNCE_CHAT = ((process.env.CHAT_ID || '').trim()) || null; // optional
 const DURATION_MINUTES = Number(process.env.DURATION_MINUTES || 30); // 0 = no auto-stop
 const SLEEP_WARNING_SECONDS = Number(process.env.SLEEP_WARNING_SECONDS || 60); // warn before sleep
 const ADD_REQUIRE_ALLOWLIST = String(process.env.ADD_REQUIRE_ALLOWLIST || 'true') === 'true';
-// Anti-spam: ignore rapid button taps per user/chat (ms)
-const SPAM_GAP_MS = Number(process.env.SPAM_GAP_MS || 800);
-// Drop any pending updates that arrived while the bot was asleep
 const DROP_PENDING = String(process.env.DROP_PENDING || 'true') === 'true';
+const DEFAULT_COMPACT = String(process.env.COMPACT || 'false') === 'true'; // default per-chat view
 
-// Create bot WITHOUT polling first; we will delete webhook, then start polling explicitly.
+// No polling yet; we’ll clear webhook then start
 const bot = new TelegramBot(BOT_TOKEN, { polling: false });
-// Helper to accept /cmd and /cmd@BotName (with optional argument)
 const cmdRe = (name, hasArg = false) =>
   new RegExp(`^\\/${name}(?:@\\w+)?${hasArg ? "\\s+(.+)" : "\\s*$"}`, "i");
 
-// ======= Persistence =======
+// ===== Persistence =====
 const DATA_PATH = path.resolve(__dirname, 'checklists.json');
 function loadData() {
   try { return JSON.parse(fs.readFileSync(DATA_PATH, 'utf8')); }
@@ -40,125 +37,106 @@ function saveData(obj) {
 let DB = loadData();
 
 /**
- * DB[chatId] structure (backward compatible):
- * - OLD: Array of items
- * - NEW: { items: [...], allow: [userId, ...], view: "full" | "compact" }
+ * DB[chatId] = { items:[{text,done}], allow:[id...], removeMode:boolean, compact:boolean }
+ * (backward-compatible with legacy array -> {items:...})
  */
 function getState(cid) {
   let v = DB[cid];
-  if (!v) { v = { items: [], allow: [], view: 'full' }; DB[cid] = v; return v; }
-  if (Array.isArray(v)) { v = { items: v, allow: [], view: 'full' }; DB[cid] = v; return v; }
+  if (!v) { v = { items: [], allow: [], removeMode: false, compact: DEFAULT_COMPACT }; DB[cid] = v; return v; }
+  if (Array.isArray(v)) { v = { items: v, allow: [], removeMode: false, compact: DEFAULT_COMPACT }; DB[cid] = v; return v; }
   if (!Array.isArray(v.items)) v.items = [];
   if (!Array.isArray(v.allow)) v.allow = [];
-  if (!v.view) v.view = 'full';
+  if (typeof v.removeMode !== 'boolean') v.removeMode = false;
+  if (typeof v.compact !== 'boolean') v.compact = DEFAULT_COMPACT;
   return v;
 }
-const getList  = (cid) => getState(cid).items;
-const getAllow = (cid) => getState(cid).allow;
-const getView  = (cid) => getState(cid).view;
-const setView  = (cid, view) => { getState(cid).view = view; };
+
+const getList       = (cid) => getState(cid).items;
+const getAllow      = (cid) => getState(cid).allow;
+const isRemoveMode  = (cid) => getState(cid).removeMode;
+const setRemoveMode = (cid, on) => { getState(cid).removeMode = !!on; };
+const isCompact     = (cid) => getState(cid).compact;
+const setCompact    = (cid, on) => { getState(cid).compact = !!on; };
 
 const ActiveChats = new Set(Object.keys(DB));
-const isAllDone = (items) => items.length > 0 && items.every((x) => x.done);
-const escapeHtml = (s) => s.replace(/[&<>"']/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
-const truncate = (s, n) => (s && s.length > n ? s.slice(0, n - 1) + '…' : s);
 
-// ===== Rendering =====
-function renderLinesFull(items) {
+// ===== Utils =====
+const isAllDone = (items) => items.length > 0 && items.every(x => x.done);
+const escapeHtml = (s) => s.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+const truncate = (s,n)=> s && s.length>n ? s.slice(0,n-1)+'…' : s;
+
+function renderLines(items) {
   return items.length
-    ? items.map((it, i) => `${i + 1}. ${it.done ? '✅' : '⬜️'} ${escapeHtml(it.text)}`).join('\n')
-    : 'No items yet. Use /add &lt;task&gt; or the + button.';
+    ? items.map((it,i)=> `${i+1}. ${it.done?'✅':'⬜️'} ${escapeHtml(it.text)}`).join('\n')
+    : 'No items yet. Use the keyboard below or /add &lt;task&gt;.';
 }
-function renderLinesCompact(items) {
-  if (!items.length) return 'No items yet. Tap ➕ Add.';
-  const remaining = items.filter(i => !i.done);
-  const done = items.length - remaining.length;
-  const top = remaining.slice(0, 5) // cap to keep short
-    .map((it, i) => `${i + 1}. ⬜️ ${escapeHtml(truncate(it.text, 24))}`)
-    .join('\n');
-  const more = remaining.length > 5 ? `\n…+${remaining.length - 5} more` : '';
-  const line2 = done ? `\n${done} done ✅` : '';
-  return top + more + line2;
-}
-function renderForView(cid, items) {
-  const view = getView(cid);
-  return view === 'compact' ? renderLinesCompact(items) : renderLinesFull(items);
+function renderHeader(items) {
+  const total = items.length;
+  const done = items.filter(x => x.done).length;
+  const left = total - done;
+  return `<b>Checklist</b> — ${total ? `${left}/${total} left${left===0?' ✅':''}` : 'empty'}`;
 }
 
-// Inline keyboard under the checklist message (unchanged)
-function buildInlineKeyboard(items) {
-  const rows = items.map((it, i) => ([
-    { text: `${it.done ? '✅' : '⬜️'} ${truncate(it.text, 40)}`, callback_data: `t:${i}` },
-    { text: '🗑', callback_data: `rm:${i}` },
-  ]));
-  rows.push([
-    { text: '➕ Add', callback_data: 'add_prompt' },
-    { text: '🧹 Clear checks', callback_data: 'clear_checks' },
-    { text: '🔄 Refresh', callback_data: 'refresh' },
-  ]);
-  return { reply_markup: { inline_keyboard: rows } };
+// Each item’s keyboard button label (easy to parse, phone-friendly)
+function itemButtonLabel(it, i) {
+  return `${it.done ? '✅' : '⬜️'} #${i+1}: ${truncate(it.text, 28)}`;
 }
 
-// Reply keyboard at the bottom bar (now includes Compact/Full toggle)
-function replyKbFor(cid) {
-  const view = getView(cid);
-  const toggle = view === 'compact' ? '📋 Full' : '🔎 Compact';
+// Build reply keyboard with global controls + one row per item
+function buildReplyKeyboard(cid) {
+  const items = getList(cid);
+  const rows = [
+    [ { text:'➕ Add' }, { text:'🔄 Refresh' } ],
+    [ { text: isRemoveMode(cid) ? '✅ Done removing' : '🗑 Remove mode' }, { text:'🧹 Clear checks' } ],
+    [ { text: isCompact(cid) ? '📝 Full view' : '📋 Compact view' } ],
+  ];
+  for (let i=0;i<items.length;i++){
+    rows.push([ { text: itemButtonLabel(items[i], i) } ]);
+  }
   return {
-    keyboard: [
-      [{ text: '➕ Add' }, { text: '🧹 Clear checks' }],
-      [{ text: toggle }, { text: '🔄 Refresh' }],
-    ],
-    resize_keyboard: true,
-    one_time_keyboard: false,
+    reply_markup: {
+      keyboard: rows,
+      resize_keyboard: true,
+      one_time_keyboard: false,
+      input_field_placeholder: 'Tap a button or type a task…'
+    }
   };
 }
 
-async function reply(cid, html, extra = {}) {
-  return bot.sendMessage(cid, html, { parse_mode: 'HTML', ...extra });
-}
-async function edit(cid, mid, html, extra = {}) {
-  return bot.editMessageText(html, { chat_id: cid, message_id: mid, parse_mode: 'HTML', ...extra });
-}
-
-function ensureChatTracked(cid) {
-  const key = String(cid);
+// Track & ensure state shell exists
+function ensureChatTracked(cid){
+  const k = String(cid);
   let added = false;
-  if (!ActiveChats.has(key)) { ActiveChats.add(key); added = true; }
-  getState(cid); // ensures structure exists
+  if (!ActiveChats.has(k)) { ActiveChats.add(k); added = true; }
+  getState(cid);
   return added;
 }
 
+// Core send/refresh
 async function sendListInteractive(cid) {
   const items = getList(cid);
-  return reply(cid, `<b>Your checklist</b>\n${renderForView(cid, items)}`, buildInlineKeyboard(items));
-}
-async function refreshMessage(cid, mid) {
-  const items = getList(cid);
-  return edit(cid, mid, `<b>Your checklist</b>\n${renderForView(cid, items)}`, buildInlineKeyboard(items));
+  const body = isCompact(cid) ? renderHeader(items) : `<b>Your checklist</b>\n${renderLines(items)}`;
+  return bot.sendMessage(cid, body, { parse_mode:'HTML', ...buildReplyKeyboard(cid) });
 }
 
-// === helpers for “clear checks” ===
+// Clear checkmarks (keep text)
 function uncheckAll(cid) {
   const items = getList(cid);
   let changed = false;
-  for (const it of items) {
-    if (it.done) { it.done = false; changed = true; }
-  }
+  for (const it of items) { if (it.done) { it.done = false; changed = true; } }
   return { changed, count: items.length };
 }
 function resetAllChatsChecks() {
   let changed = false;
   for (const cid of Object.keys(DB)) {
     const st = getState(cid);
-    for (const it of st.items) {
-      if (it.done) { it.done = false; changed = true; }
-    }
+    for (const it of st.items) { if (it.done) { it.done = false; changed = true; } }
   }
   return changed;
 }
 
-// ===== Allowlist & permissions =====
-let SELF_ID = 0; // set after getMe()
+// ===== Allowlist / permissions =====
+let SELF_ID = 0;
 
 async function isAdmin(cid, uid) {
   try {
@@ -166,385 +144,235 @@ async function isAdmin(cid, uid) {
     return m && (m.status === 'creator' || m.status === 'administrator');
   } catch { return false; }
 }
-
 async function canUserAdd(msg) {
   const cid = msg.chat.id;
   const uid = msg.from?.id;
   if (!uid) return false;
-
-  // Always allow in private chats
   if (msg.chat.type === 'private') return true;
-
-  // Admins always allowed
   if (await isAdmin(cid, uid)) return true;
-
-  // If enforcement disabled, allow everyone
   if (!ADD_REQUIRE_ALLOWLIST) return true;
-
-  // Otherwise only allow if on allowlist
   return getAllow(cid).includes(uid);
 }
-
 function formatUser(u) {
   const name = [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || `id:${u.id}`;
   return `${escapeHtml(name)} (${u.id})`;
 }
 
-// ===== Welcome-on-first-contact helpers =====
+// ===== Welcome (once per run per chat) =====
 const WelcomedThisRun = new Set();
-
 async function maybeWelcome(cid, newlyTracked) {
   if (WelcomedThisRun.has(cid)) return;
   WelcomedThisRun.add(cid);
-  if (newlyTracked) saveData(DB); // persist new chat
-
-  await reply(
-    cid,
-    '👋 Hello! The bot is awake. Use /list or the buttons below.',
-    { reply_markup: replyKbFor(cid) }
-  );
+  if (newlyTracked) saveData(DB);
+  await bot.sendMessage(cid, '👋 Hello! The bot is awake. Use the keyboard below or type a task.');
   await sendListInteractive(cid);
 }
 
-async function sendReminderToChat(cid, prefix) {
-  const items = getList(cid);
-  if (isAllDone(items)) {
-    await reply(cid, `${prefix}🎉 Awesome — your list is complete!`);
-  } else if (items.length === 0) {
-    await reply(cid, `${prefix}Your list is empty. Tap ➕ Add to start.`, buildInlineKeyboard(items));
-  } else {
-    await reply(cid, `${prefix}Keep going!\n\n${renderForView(cid, items)}`, buildInlineKeyboard(items));
-  }
-}
-
-// ======= Logging & hardening =======
-process.on('unhandledRejection', (e) => console.error('unhandledRejection:', e?.response?.body || e));
-process.on('uncaughtException', (e) => console.error('uncaughtException:', e?.response?.body || e));
+// ===== Logging & safety =====
+process.on('unhandledRejection', e => console.error('unhandledRejection:', e?.response?.body || e));
+process.on('uncaughtException',  e => console.error('uncaughtException:', e?.response?.body || e));
 const HEARTBEAT = setInterval(() => { if (VERBOSE) console.log('…heartbeat'); }, 10_000);
 
-// ======= Commands =======
-// /start
+// ===== Commands =====
 bot.onText(cmdRe('start'), async (msg) => {
-  const cid = msg.chat.id;
-  const newlyTracked = ensureChatTracked(cid);
-  await maybeWelcome(cid, newlyTracked);
-
-  await reply(
-    cid,
+  const cid = msg.chat.id; const added = ensureChatTracked(cid);
+  await maybeWelcome(cid, added);
+  await bot.sendMessage(cid,
     ['<b>Checklist Bot</b> is awake 👋',
      'Use buttons or commands:',
      '• /add &lt;text&gt;',
      '• /list',
      '• /done &lt;number&gt;',
      '• /remove &lt;number&gt;',
-     '• /clear  (uncheck all)',
+     '• /clear (uncheck all)',
      '• /allow (admin, reply to a user)',
      '• /deny  (admin, reply to a user)',
      '• /whoallowed'].join('\n'),
-    { reply_markup: replyKbFor(cid) }
+    { parse_mode:'HTML' }
   );
 });
-
-// /add <text>
 bot.onText(cmdRe('add', true), async (msg, m) => {
-  const cid = msg.chat.id;
-  const newlyTracked = ensureChatTracked(cid);
-  await maybeWelcome(cid, newlyTracked);
-
-  if (!(await canUserAdd(msg))) {
-    return reply(cid, `🚫 You are not allowed to add tasks in this chat.`);
-  }
-
-  const text = (m[1] || '').trim();
-  if (!text) return reply(cid, 'Usage: /add &lt;task&gt;');
-  getList(cid).push({ text, done: false }); saveData(DB);
-  await reply(cid, `Added: <b>${escapeHtml(text)}</b>`);
+  const cid = msg.chat.id; const added = ensureChatTracked(cid);
+  await maybeWelcome(cid, added);
+  if (!(await canUserAdd(msg))) return bot.sendMessage(cid, '🚫 You are not allowed to add tasks in this chat.');
+  const text = (m[1] || '').trim(); if (!text) return bot.sendMessage(cid, 'Usage: /add <task>');
+  getList(cid).push({ text, done:false }); saveData(DB);
   await sendListInteractive(cid);
 });
-
-// /list
 bot.onText(cmdRe('list'), async (msg) => {
-  const cid = msg.chat.id;
-  const newlyTracked = ensureChatTracked(cid);
-  await maybeWelcome(cid, newlyTracked);
+  const cid = msg.chat.id; const added = ensureChatTracked(cid);
+  await maybeWelcome(cid, added);
   await sendListInteractive(cid);
 });
-
-// /done <n>
 bot.onText(cmdRe('done', true), async (msg, m) => {
-  const cid = msg.chat.id;
-  const newlyTracked = ensureChatTracked(cid);
-  await maybeWelcome(cid, newlyTracked);
-
-  const i = parseInt(m[1], 10) - 1;
-  const items = getList(cid);
-  if (i >= 0 && i < items.length) {
-    items[i].done = true; saveData(DB);
-    await reply(cid, `Marked done: <b>${escapeHtml(items[i].text)}</b> ✅`);
-    await sendListInteractive(cid);
-  } else {
-    await reply(cid, 'Usage: /done &lt;number&gt;');
-  }
+  const cid = msg.chat.id; const added = ensureChatTracked(cid);
+  await maybeWelcome(cid, added);
+  const i = parseInt(m[1],10)-1; const items = getList(cid);
+  if (i>=0 && i<items.length) { items[i].done = true; saveData(DB); await sendListInteractive(cid); }
+  else await bot.sendMessage(cid, 'Usage: /done <number>');
 });
-
-// /remove <n>
 bot.onText(cmdRe('remove', true), async (msg, m) => {
-  const cid = msg.chat.id;
-  const newlyTracked = ensureChatTracked(cid);
-  await maybeWelcome(cid, newlyTracked);
-
-  const i = parseInt(m[1], 10) - 1;
-  const items = getList(cid);
-  if (i >= 0 && i < items.length) {
-    const r = items.splice(i, 1)[0]; saveData(DB);
-    await reply(cid, `Removed: <b>${escapeHtml(r.text)}</b> 🗑️`);
-    await sendListInteractive(cid);
-  } else {
-    await reply(cid, 'Usage: /remove &lt;number&gt;');
-  }
+  const cid = msg.chat.id; const added = ensureChatTracked(cid);
+  await maybeWelcome(cid, added);
+  const i = parseInt(m[1],10)-1; const items = getList(cid);
+  if (i>=0 && i<items.length) { items.splice(i,1); saveData(DB); await sendListInteractive(cid); }
+  else await bot.sendMessage(cid, 'Usage: /remove <number>');
 });
-
-// /clear  -> Uncheck all items (keep text)
 bot.onText(cmdRe('clear'), async (msg) => {
-  const cid = msg.chat.id;
-  const newlyTracked = ensureChatTracked(cid);
-  await maybeWelcome(cid, newlyTracked);
-
-  const { changed, count } = uncheckAll(cid);
-  if (count === 0) {
-    await reply(cid, 'Nothing to clear — your list is empty.');
-  } else {
-    if (changed) { saveData(DB); }
-    await reply(cid, 'All checkmarks cleared. ⬜️');
-  }
+  const cid = msg.chat.id; const added = ensureChatTracked(cid);
+  await maybeWelcome(cid, added);
+  const { changed } = uncheckAll(cid); if (changed) saveData(DB);
   await sendListInteractive(cid);
 });
 
-// Allowlist admin commands (reply-based)
+// Allowlist admin
 bot.onText(cmdRe('allow'), async (msg) => {
   const cid = msg.chat.id;
-  if (!(await isAdmin(cid, msg.from.id))) return reply(cid, 'Only admins can use /allow.');
-  if (!msg.reply_to_message || !msg.reply_to_message.from) return reply(cid, 'Reply to the user’s message with /allow.');
-
+  if (!(await isAdmin(cid, msg.from.id))) return bot.sendMessage(cid, 'Only admins can use /allow.');
+  if (!msg.reply_to_message || !msg.reply_to_message.from) return bot.sendMessage(cid, 'Reply to the user’s message with /allow.');
   const target = msg.reply_to_message.from;
   const allow = getAllow(cid);
-  if (!allow.includes(target.id)) {
-    allow.push(target.id);
-    saveData(DB);
-  }
-  await reply(cid, `✅ Allowed: ${formatUser(target)}`);
+  if (!allow.includes(target.id)) { allow.push(target.id); saveData(DB); }
+  await bot.sendMessage(cid, `✅ Allowed: ${formatUser(target)}`, { parse_mode:'HTML' });
 });
 bot.onText(cmdRe('deny'), async (msg) => {
   const cid = msg.chat.id;
-  if (!(await isAdmin(cid, msg.from.id))) return reply(cid, 'Only admins can use /deny.');
-  if (!msg.reply_to_message || !msg.reply_to_message.from) return reply(cid, 'Reply to the user’s message with /deny.');
-
+  if (!(await isAdmin(cid, msg.from.id))) return bot.sendMessage(cid, 'Only admins can use /deny.');
+  if (!msg.reply_to_message || !msg.reply_to_message.from) return bot.sendMessage(cid, 'Reply to the user’s message with /deny.');
   const target = msg.reply_to_message.from;
   const allow = getAllow(cid);
   const idx = allow.indexOf(target.id);
-  if (idx >= 0) {
-    allow.splice(idx, 1);
-    saveData(DB);
-    await reply(cid, `🚫 Removed from allowlist: ${formatUser(target)}`);
-  } else {
-    await reply(cid, `${formatUser(target)} was not on the allowlist.`);
-  }
+  if (idx >= 0) { allow.splice(idx, 1); saveData(DB); await bot.sendMessage(cid, `🚫 Removed from allowlist: ${formatUser(target)}`, { parse_mode:'HTML' }); }
+  else { await bot.sendMessage(cid, `${formatUser(target)} was not on the allowlist.`, { parse_mode:'HTML' }); }
 });
 bot.onText(cmdRe('whoallowed'), async (msg) => {
-  const cid = msg.chat.id;
-  const allow = getAllow(cid);
-  if (allow.length === 0) return reply(cid, 'No one is on the allowlist yet.');
+  const cid = msg.chat.id; const allow = getAllow(cid);
+  if (allow.length === 0) return bot.sendMessage(cid, 'No one is on the allowlist yet.');
   const lines = [];
   for (const uid of allow) {
-    try {
-      const m = await bot.getChatMember(cid, uid);
-      const u = m.user || { id: uid };
-      lines.push(`• ${formatUser(u)}`);
-    } catch {
-      lines.push(`• id:${uid}`);
-    }
+    try { const m = await bot.getChatMember(cid, uid); const u = m.user || { id: uid }; lines.push(`• ${formatUser(u)}`); }
+    catch { lines.push(`• id:${uid}`); }
   }
-  await reply(cid, `<b>Allowlist</b>\n${lines.join('\n')}`);
+  await bot.sendMessage(cid, `<b>Allowlist</b>\n${lines.join('\n')}`, { parse_mode:'HTML' });
 });
 
-// ===== Message handler (reply keyboard texts + free-text add) =====
+// ===== Reply keyboard actions & free text =====
 bot.on('message', async (msg) => {
   if (!msg.text) return;
+  if (/^\/(start|add|list|done|remove|clear|allow|deny|whoallowed)/i.test(msg.text)) return;
 
   const cid = msg.chat.id;
-  const newlyTracked = ensureChatTracked(cid);
-  await maybeWelcome(cid, newlyTracked);
+  const added = ensureChatTracked(cid);
+  await maybeWelcome(cid, added);
 
-  // Reply-keyboard menu texts
-  if (msg.text === '🔄 Refresh') {
-    await sendListInteractive(cid);
-    return;
-  }
+  // Global buttons
+  if (msg.text === '🔄 Refresh') { await sendListInteractive(cid); return; }
 
   if (msg.text === '🧹 Clear checks') {
-    const { changed } = uncheckAll(cid);
-    if (changed) saveData(DB);
-    await reply(cid, 'All checkmarks cleared. ⬜️', { reply_markup: replyKbFor(cid) });
-    await sendListInteractive(cid);
-    return;
+    const { changed } = uncheckAll(cid); if (changed) saveData(DB);
+    await sendListInteractive(cid); return;
   }
 
-  if (msg.text === '🔎 Compact' || msg.text === '📋 Full') {
-    const next = msg.text === '🔎 Compact' ? 'compact' : 'full';
-    setView(cid, next); saveData(DB);
-    await reply(cid, `View changed to <b>${next}</b>.`, { reply_markup: replyKbFor(cid) });
-    await sendListInteractive(cid);
+  if (msg.text === '📋 Compact view') {
+    setCompact(cid, true); saveData(DB);
+    await sendListInteractive(cid); return;
+  }
+  if (msg.text === '📝 Full view') {
+    setCompact(cid, false); saveData(DB);
+    await sendListInteractive(cid); return;
+  }
+
+  if (msg.text === '🗑 Remove mode') {
+    // gate this behind add-permission (same as adding/removing)
+    if (!(await canUserAdd(msg))) { await bot.sendMessage(cid, '🚫 You are not allowed to remove in this chat.'); return; }
+    setRemoveMode(cid, true); saveData(DB);
+    await bot.sendMessage(cid, 'Remove mode ON. Tap any item button to delete it, or press “✅ Done removing”.');
+    return;
+  }
+  if (msg.text === '✅ Done removing') {
+    setRemoveMode(cid, false); saveData(DB);
+    await bot.sendMessage(cid, 'Remove mode OFF.');
     return;
   }
 
   if (msg.text === '➕ Add') {
-    if (!(await canUserAdd(msg))) {
-      await reply(cid, '🚫 You are not allowed to add tasks in this chat.');
-      return;
-    }
-    await bot.sendMessage(cid, 'Send the task text as a reply to this message.', {
-      reply_markup: { force_reply: true },
-    });
+    await bot.sendMessage(cid, 'Send the task text:', { reply_markup: { force_reply: true } });
     return;
   }
 
-  // Commands are handled by onText above; ignore them here
-  if (/^\/(start|add|list|done|remove|clear|allow|deny|whoallowed)/i.test(msg.text)) return;
+  // Add via force-reply
+  if (msg.reply_to_message && /Send the task text:/.test(msg.reply_to_message.text || '')) {
+    if (!(await canUserAdd(msg))) { await bot.sendMessage(cid, `🚫 You are not allowed to add tasks in this chat.`); return; }
+    const t = msg.text.trim(); if (!t) return;
+    getList(cid).push({ text:t, done:false }); saveData(DB);
+    await sendListInteractive(cid); return;
+  }
 
-  // In groups, only accept free text if replying to the bot
+  // Item buttons: match "#N"
+  const m = msg.text.match(/#(\d+)/);
+  if (m) {
+    const n = parseInt(m[1], 10) - 1;
+    const items = getList(cid);
+    if (n >= 0 && n < items.length) {
+      if (isRemoveMode(cid)) {
+        // removal allowed only if the user can add/remove
+        if (!(await canUserAdd(msg))) { await bot.sendMessage(cid, `🚫 You are not allowed to remove tasks in this chat.`); return; }
+        items.splice(n, 1); saveData(DB);
+      } else {
+        items[n].done = !items[n].done; saveData(DB);
+      }
+      await sendListInteractive(cid);
+      return;
+    }
+  }
+
+  // In groups: only add free text when replying to the bot
   if (msg.chat.type !== 'private') {
     if (!(msg.reply_to_message && msg.reply_to_message.from && msg.reply_to_message.from.id === SELF_ID)) return;
   }
 
-  if (!(await canUserAdd(msg))) {
-    return reply(cid, `🚫 You are not allowed to add tasks in this chat.`);
-  }
-
+  // Free text add (fallback)
+  if (!(await canUserAdd(msg))) { await bot.sendMessage(cid, `🚫 You are not allowed to add tasks in this chat.`); return; }
   const t = msg.text.trim(); if (!t) return;
-  getList(cid).push({ text: t, done: false }); saveData(DB);
-  await reply(cid, `Added: <b>${escapeHtml(t)}</b>`, { reply_markup: replyKbFor(cid) });
+  getList(cid).push({ text:t, done:false }); saveData(DB);
   await sendListInteractive(cid);
 });
 
-// ===== Anti-spam for inline buttons =====
-const tapLimiter = new Map(); // key `${cid}:${uid}` -> lastTs
-
-// Inline buttons
-bot.on('callback_query', async (q) => {
-  try {
-    const cid = q.message.chat.id; const mid = q.message.message_id;
-    const newlyTracked = ensureChatTracked(cid);
-    await maybeWelcome(cid, newlyTracked);
-
-    // Throttle per user per chat
-    const key = `${cid}:${q.from.id}`;
-    const now = Date.now();
-    const last = tapLimiter.get(key) || 0;
-    if (now - last < SPAM_GAP_MS) {
-      await bot.answerCallbackQuery(q.id, { text: 'Please wait…', show_alert: false });
-      return;
-    }
-    tapLimiter.set(key, now);
-
-    const items = getList(cid);
-    const [action, arg] = (q.data || '').split(':');
-
-    if (action === 't') {
-      const i = parseInt(arg, 10);
-      if (!isNaN(i) && items[i]) { items[i].done = !items[i].done; saveData(DB); }
-      await refreshMessage(cid, mid);
-    } else if (action === 'rm') {
-      const i = parseInt(arg, 10);
-      if (!isNaN(i) && items[i]) {
-        const r = items.splice(i, 1)[0]; saveData(DB);
-        await reply(cid, `Removed: <b>${escapeHtml(r.text)}</b> 🗑️`);
-      }
-      await refreshMessage(cid, mid);
-    } else if (action === 'clear_checks') {
-      const { changed } = uncheckAll(cid); if (changed) saveData(DB);
-      await refreshMessage(cid, mid);
-    } else if (action === 'refresh') {
-      await refreshMessage(cid, mid);
-    } else if (action === 'add_prompt') {
-      const fakeMsg = { chat: { id: cid, type: q.message.chat.type }, from: q.from };
-      if (!(await canUserAdd(fakeMsg))) {
-        await reply(cid, `🚫 You are not allowed to add tasks in this chat.`);
-      } else {
-        await bot.sendMessage(cid, 'Send the task text as a reply to this message.', {
-          reply_markup: { force_reply: true },
-        });
-      }
-    }
-
-    await bot.answerCallbackQuery(q.id);
-  } catch (e) {
-    console.error('callback error:', e?.response?.body || e);
-    try { await bot.answerCallbackQuery(q.id); } catch {}
-  }
-});
-
-// Polling error visibility (do NOT exit)
-bot.on('polling_error', (err) => {
-  console.error('polling_error:', err?.response?.body || err);
-});
-
-if (VERBOSE) {
-  bot.on('message', (m) => console.log('msg from', m.chat?.id, m.text));
-  bot.on('callback_query', (q) => console.log('callback from', q.message?.chat?.id, q.data));
-}
-
-// ======= Reminders / Awake / Sleep =======
+// ===== Reminders / Awake / Sleep =====
 async function broadcastAwake() {
   const targets = new Set(ActiveChats);
   if (ANNOUNCE_CHAT) targets.add(String(ANNOUNCE_CHAT));
-
-  if (VERBOSE) console.log('broadcast targets:', [...targets]);
-  if (targets.size === 0) console.log('No targets to notify (ActiveChats empty and CHAT_ID not set).');
-
   for (const cid of targets) {
-    try {
-      await reply(
-        cid,
-        '👋 Hello! The bot is awake. Use /list or the buttons below.',
-        { reply_markup: replyKbFor(cid) }
-      );
-      await sendListInteractive(cid);
-    } catch (e) { console.warn('awake send failed for', cid, e?.response?.body || e); }
+    try { await bot.sendMessage(cid, '👋 The bot is awake.'); await sendListInteractive(cid); }
+    catch (e) { console.warn('awake send failed for', cid, e?.response?.body || e); }
   }
 }
-
 async function sendReminder(prefix) {
   const targets = new Set(ActiveChats);
   if (ANNOUNCE_CHAT) targets.add(String(ANNOUNCE_CHAT));
-  if (VERBOSE) console.log('sendReminder targets:', [...targets]);
   for (const cid of targets) {
-    try {
-      await sendReminderToChat(cid, prefix);
-    } catch (e) {
-      console.error('sendReminder error for', cid, e?.response?.body || e);
-    }
+    try { await bot.sendMessage(cid, prefix); await sendListInteractive(cid); }
+    catch (e) { console.error('reminder error for', cid, e?.response?.body || e); }
   }
 }
-
-// Warning before sleep (generic message, no “SM” text)
 async function sendSleepWarning() {
   const targets = new Set(ActiveChats);
   if (ANNOUNCE_CHAT) targets.add(String(ANNOUNCE_CHAT));
   for (const cid of targets) {
-    await reply(cid, '😴 The bot is going to sleep soon.');
+    try { await bot.sendMessage(cid, '😴 The bot is going to sleep soon.'); }
+    catch {}
   }
 }
 
-// ======= Startup =======
-(async function main() {
+// ===== Startup =====
+(async function main(){
   try {
-    const me = await bot.getMe(); // token check early
+    const me = await bot.getMe();
     SELF_ID = me.id;
     console.log(`🤖 Bot @${me.username} (ID ${me.id}) starting…`);
 
     if (ANNOUNCE_CHAT) ensureChatTracked(ANNOUNCE_CHAT);
 
-    // Clear webhook so polling can work; DROP old updates
     try {
       await bot.deleteWebHook({ drop_pending_updates: DROP_PENDING });
       console.log(`✅ Webhook cleared. (drop_pending_updates=${DROP_PENDING})`);
@@ -552,32 +380,26 @@ async function sendSleepWarning() {
       console.warn('⚠️ deleteWebHook failed (continuing):', e?.response?.body || e);
     }
 
-    // Start polling
     await bot.startPolling({
       interval: 300,
-      params: { timeout: 50, allowed_updates: ['message', 'callback_query'] },
+      params: { timeout: 50, allowed_updates: ['message'] }, // no callback_query needed now
     });
     console.log('📡 Polling started.');
 
     if (VERBOSE) console.log('ActiveChats:', [...ActiveChats]);
 
-    // Startup hello
+    // Hello
     await broadcastAwake();
 
-    // Timed reminders (example: 20 & 25 minutes)
-    const durMs = DURATION_MINUTES * 60 * 1000;
-    if (DURATION_MINUTES <= 0 || durMs > 20 * 60 * 1000)
-      setTimeout(() => sendReminder('⏱️ 20 minutes gone. '), 20 * 60 * 1000);
-    if (DURATION_MINUTES <= 0 || durMs > 25 * 60 * 1000)
-      setTimeout(() => sendReminder('⏱️ 25 minutes gone. '), 25 * 60 * 1000);
+    // Reminders at 20 and 25 minutes (regardless of duration length)
+    setTimeout(() => sendReminder('⏱️ 20 minutes gone.'), 20 * 60 * 1000);
+    setTimeout(() => sendReminder('⏱️ 25 minutes gone.'), 25 * 60 * 1000);
 
     // Auto-stop + warning + reset checks
     if (DURATION_MINUTES > 0) {
+      const durMs = DURATION_MINUTES * 60 * 1000;
       const warnMs = Math.max(0, durMs - (SLEEP_WARNING_SECONDS * 1000));
-      setTimeout(() => {
-        console.log('⏰ Sleep warning firing…');
-        sendSleepWarning().catch(e => console.error('sleep warning error:', e?.response?.body || e));
-      }, warnMs);
+      if (warnMs > 0) setTimeout(() => { console.log('⏰ Sleep warning firing…'); sendSleepWarning(); }, warnMs);
 
       setTimeout(async () => {
         console.log(`⏱️ ${DURATION_MINUTES} minutes elapsed — stopping bot.`);
@@ -597,5 +419,5 @@ async function sendSleepWarning() {
 })();
 
 // Persist on shutdown
-process.on('SIGTERM', () => { try { if (resetAllChatsChecks()) saveData(DB); } catch {} clearInterval(HEARTBEAT); process.exit(0); });
-process.on('SIGINT',  () => { try { if (resetAllChatsChecks()) saveData(DB); } catch {} clearInterval(HEARTBEAT); process.exit(0); });
+process.on('SIGTERM', ()=> { try { if (resetAllChatsChecks()) saveData(DB); } catch {} clearInterval(HEARTBEAT); process.exit(0); });
+process.on('SIGINT',  ()=> { try { if (resetAllChatsChecks()) saveData(DB); } catch {} clearInterval(HEARTBEAT); process.exit(0); });
