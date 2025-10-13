@@ -315,7 +315,7 @@ if (VERBOSE) {
   bot.on('callback_query', (q) => console.log('callback from', q.message?.chat?.id, q.data));
 }
 
-// ===== Reminders / Awake / Sleep =====
+// ===== Reminders / Poll / Awake / Sleep =====
 async function broadcastAwake() {
   const targets = new Set(ActiveChats);
   if (ANNOUNCE_CHAT) targets.add(String(ANNOUNCE_CHAT));
@@ -327,6 +327,7 @@ async function broadcastAwake() {
     } catch (e) { console.warn('awake send failed for', cid, e?.response?.body || e); }
   }
 }
+
 async function sendReminder(prefix) {
   const targets = new Set(ActiveChats);
   if (ANNOUNCE_CHAT) targets.add(String(ANNOUNCE_CHAT));
@@ -334,6 +335,29 @@ async function sendReminder(prefix) {
   for (const cid of targets) {
     try { await sendReminderToChat(cid, prefix); }
     catch (e) { console.error('sendReminder error for', cid, e?.response?.body || e); }
+  }
+}
+
+// NEW: Morning attendance poll (non-anonymous)
+const POLL_QUESTION = 'Good morning commanders, please indicate whether you will be in camp for today';
+const POLL_OPTIONS = ['Yes', 'No', 'MA/MC', 'OL', 'LL', 'OFF'];
+async function broadcastMorningPoll() {
+  const targets = new Set(ActiveChats);
+  if (ANNOUNCE_CHAT) targets.add(String(ANNOUNCE_CHAT));
+  if (targets.size === 0) {
+    if (VERBOSE) console.log('No targets for poll.');
+    return;
+  }
+  for (const cid of targets) {
+    try {
+      await bot.sendPoll(cid, POLL_QUESTION, POLL_OPTIONS, {
+        is_anonymous: false,
+        allows_multiple_answers: false
+      });
+      if (VERBOSE) console.log('Poll sent to', cid);
+    } catch (e) {
+      console.error('poll send failed for', cid, e?.response?.body || e);
+    }
   }
 }
 
@@ -364,7 +388,7 @@ function scheduleIfPositive(ms, fn, label = '') {
     SELF_ID = me.id;
     console.log(`🤖 Bot @${me.username} (ID ${me.id}) starting…`);
 
-    // Make sure we always have at least one target this run
+    // Ensure at least one target this run if CHAT_ID is set
     if (ANNOUNCE_CHAT) ensureChatTracked(ANNOUNCE_CHAT);
 
     try {
@@ -385,20 +409,25 @@ function scheduleIfPositive(ms, fn, label = '') {
     // Hello
     await broadcastAwake();
 
+    // NEW: Morning attendance poll at start of morning runs
+    if (RUN_KIND === 'morning') {
+      await broadcastMorningPoll();
+    }
+
     // Relative nudges (20 & 25 minutes after start)
     setTimeout(() => { sendReminder('⏱️ 20 minutes gone. ').catch(()=>{}); }, 20 * 60 * 1000);
     setTimeout(() => { sendReminder('⏱️ 25 minutes gone. ').catch(()=>{}); }, 25 * 60 * 1000);
 
-    // Absolute SGT “10 minutes before” announcements (only when we know which run this is)
+    // Absolute SGT “10 minutes before” announcements
     if (RUN_KIND === 'morning') {
-      // 10 minutes before 10:00 SGT -> 09:50 SGT
+      // 09:50 SGT (handover-10min)
       scheduleIfPositive(
         msUntilTodaySGT(9, 50, 0),
         () => sendReminder('🔔 Handover in ~10 minutes (10:00 SGT). ').catch(()=>{}),
         '09:50 SGT handover warn'
       );
     } else if (RUN_KIND === 'noon') {
-      // 10 minutes before 17:00 SGT -> 16:50 SGT
+      // 16:50 SGT (EOD-10min)
       scheduleIfPositive(
         msUntilTodaySGT(16, 50, 0),
         () => sendReminder('🔔 End of day in ~10 minutes (17:00 SGT). ').catch(()=>{}),
