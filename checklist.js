@@ -158,6 +158,16 @@ function formatUser(u) {
   return `${escapeHtml(name)} (${u.id})`;
 }
 
+// ===== Morning poll helper (for /testpoll) =====
+async function sendMorningPoll(cid) {
+  return bot.sendPoll(
+    cid,
+    'Good morning commanders, please indicate whether you will be in camp for today',
+    ['Yes','No','MA/MC','OL','LL','OFF'],
+    { is_anonymous: false, allows_multiple_answers: false }
+  );
+}
+
 // ===== Welcome (once per run per chat) =====
 const WelcomedThisRun = new Set();
 async function maybeWelcome(cid, newlyTracked) {
@@ -187,7 +197,8 @@ bot.onText(cmdRe('start'), async (msg) => {
      '• /clear (uncheck all)',
      '• /allow (admin, reply to a user)',
      '• /deny  (admin, reply to a user)',
-     '• /whoallowed'].join('\n'),
+     '• /whoallowed',
+     '• /testpoll (admin) — send today’s attendance poll'].join('\n'),
     { parse_mode:'HTML' }
   );
 });
@@ -256,10 +267,25 @@ bot.onText(cmdRe('whoallowed'), async (msg) => {
   await bot.sendMessage(cid, `<b>Allowlist</b>\n${lines.join('\n')}`, { parse_mode:'HTML' });
 });
 
+// === NEW: /testpoll (admin) ===
+bot.onText(cmdRe('testpoll'), async (msg) => {
+  const cid = msg.chat.id;
+  // Restrict to admins in groups; allow in PMs
+  const isAdminUser = await (async () => {
+    if (msg.chat.type === 'private') return true;
+    try {
+      const m = await bot.getChatMember(cid, msg.from.id);
+      return m && (m.status === 'creator' || m.status === 'administrator');
+    } catch { return false; }
+  })();
+  if (!isAdminUser) return bot.sendMessage(cid, 'Only admins can run /testpoll in this chat.');
+  await sendMorningPoll(cid);
+});
+
 // ===== Reply keyboard actions & free text =====
 bot.on('message', async (msg) => {
   if (!msg.text) return;
-  if (/^\/(start|add|list|done|remove|clear|allow|deny|whoallowed)/i.test(msg.text)) return;
+  if (/^\/(start|add|list|done|remove|clear|allow|deny|whoallowed|testpoll)/i.test(msg.text)) return;
 
   const cid = msg.chat.id;
   const added = ensureChatTracked(cid);
@@ -283,7 +309,6 @@ bot.on('message', async (msg) => {
   }
 
   if (msg.text === '🗑 Remove mode') {
-    // gate this behind add-permission (same as adding/removing)
     if (!(await canUserAdd(msg))) { await bot.sendMessage(cid, '🚫 You are not allowed to remove in this chat.'); return; }
     setRemoveMode(cid, true); saveData(DB);
     await bot.sendMessage(cid, 'Remove mode ON. Tap any item button to delete it, or press “✅ Done removing”.');
@@ -315,7 +340,6 @@ bot.on('message', async (msg) => {
     const items = getList(cid);
     if (n >= 0 && n < items.length) {
       if (isRemoveMode(cid)) {
-        // removal allowed only if the user can add/remove
         if (!(await canUserAdd(msg))) { await bot.sendMessage(cid, `🚫 You are not allowed to remove tasks in this chat.`); return; }
         items.splice(n, 1); saveData(DB);
       } else {
@@ -382,7 +406,7 @@ async function sendSleepWarning() {
 
     await bot.startPolling({
       interval: 300,
-      params: { timeout: 50, allowed_updates: ['message'] }, // no callback_query needed now
+      params: { timeout: 50, allowed_updates: ['message'] }, // poll messages (polls are messages)
     });
     console.log('📡 Polling started.');
 
