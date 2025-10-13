@@ -163,8 +163,8 @@ async function sendMorningPoll(cid) {
   return bot.sendPoll(
     cid,
     'Good morning commanders, please indicate whether you will be in camp for today',
-    ['Yes','No','MA/MC','OL','LL','OFF'],
-    { is_anonymous: false, allows_multiple_answers: false }
+    ['Yes','No','MA/MC/RSO','OL','LL','OFF'],
+    { is_anonymous: false, allows_multiple_answers: true, open_period: 10800 }
   );
 }
 
