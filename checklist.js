@@ -112,7 +112,7 @@ function ensureChatTracked(cid){
   return added;
 }
 
-// Core send/refresh
+// Core send
 async function sendListInteractive(cid) {
   const items = getList(cid);
   const body = isCompact(cid) ? renderHeader(items) : `<b>Your checklist</b>\n${renderLines(items)}`;
@@ -158,30 +158,6 @@ function formatUser(u) {
   return `${escapeHtml(name)} (${u.id})`;
 }
 
-// ===== Morning poll helper (for /testpoll) =====
-async function sendAttendancePoll(cid) {
-  const question = 'Good morning commanders, please indicate whether you will be in camp for today';
-  const options = ['Yes', 'No', 'MA/MC', 'OL', 'LL', 'OFF'];
-
-  // Create a regular (non-quiz), non-anonymous poll; users can change votes while open.
-  const msg = await bot.sendPoll(cid, question, options, {
-    is_anonymous: false,
-    allows_multiple_answers: false
-    // DO NOT set open_period / close_date – they cap at 600s
-  });
-
-  // Try to close it in 3 hours (3 * 3600 * 1000 ms)
-  setTimeout(async () => {
-    try {
-      await bot.stopPoll(cid, msg.message_id);
-      if (VERBOSE) console.log('Poll closed after 3h:', cid, msg.message_id);
-    } catch (e) {
-      console.warn('Could not stopPoll (maybe bot stopped or poll already closed):', e?.response?.body || e);
-    }
-  }, 3 * 3600 * 1000);
-}
-
-
 // ===== Welcome (once per run per chat) =====
 const WelcomedThisRun = new Set();
 async function maybeWelcome(cid, newlyTracked) {
@@ -211,8 +187,7 @@ bot.onText(cmdRe('start'), async (msg) => {
      '• /clear (uncheck all)',
      '• /allow (admin, reply to a user)',
      '• /deny  (admin, reply to a user)',
-     '• /whoallowed',
-     '• /testpoll (admin) — send today’s attendance poll'].join('\n'),
+     '• /whoallowed'].join('\n'),
     { parse_mode:'HTML' }
   );
 });
@@ -281,25 +256,10 @@ bot.onText(cmdRe('whoallowed'), async (msg) => {
   await bot.sendMessage(cid, `<b>Allowlist</b>\n${lines.join('\n')}`, { parse_mode:'HTML' });
 });
 
-// === NEW: /testpoll (admin) ===
-bot.onText(cmdRe('testpoll'), async (msg) => {
-  const cid = msg.chat.id;
-  // Restrict to admins in groups; allow in PMs
-  const isAdminUser = await (async () => {
-    if (msg.chat.type === 'private') return true;
-    try {
-      const m = await bot.getChatMember(cid, msg.from.id);
-      return m && (m.status === 'creator' || m.status === 'administrator');
-    } catch { return false; }
-  })();
-  if (!isAdminUser) return bot.sendMessage(cid, 'Only admins can run /testpoll in this chat.');
-  await sendMorningPoll(cid);
-});
-
 // ===== Reply keyboard actions & free text =====
 bot.on('message', async (msg) => {
   if (!msg.text) return;
-  if (/^\/(start|add|list|done|remove|clear|allow|deny|whoallowed|testpoll)/i.test(msg.text)) return;
+  if (/^\/(start|add|list|done|remove|clear|allow|deny|whoallowed)/i.test(msg.text)) return;
 
   const cid = msg.chat.id;
   const added = ensureChatTracked(cid);
@@ -376,27 +336,83 @@ bot.on('message', async (msg) => {
   await sendListInteractive(cid);
 });
 
-// ===== Reminders / Awake / Sleep =====
-async function broadcastAwake() {
+// ===== Timed helpers (SGT scheduling) =====
+const MS_IN_DAY = 24 * 60 * 60 * 1000;
+// Returns ms until the next SGT clock time (hour:0-23, minute:0-59)
+function msUntilNextSgt(hour, minute) {
+  const now = new Date();
+  // SGT = UTC+8 -> target UTC time is SGT-8h
+  const targetUtc = new Date(now);
+  targetUtc.setUTCHours(hour - 8, minute, 0, 0);
+  let delta = targetUtc.getTime() - now.getTime();
+  if (delta < 0) delta += MS_IN_DAY; // next day
+  return delta;
+}
+// Schedule a daily task at SGT time
+function scheduleDailyAtSgt(hour, minute, fn) {
+  const d = msUntilNextSgt(hour, minute);
+  if (VERBOSE) console.log(`Scheduling daily task at ${hour.toString().padStart(2,'0')}:${minute.toString().padStart(2,'0')} SGT in ${Math.round(d/1000)}s`);
+  setTimeout(async () => {
+    try { await fn(); } catch (e) { console.error('daily task error:', e?.response?.body || e); }
+    // re-arm every 24h
+    setInterval(async () => {
+      try { await fn(); } catch (e) { console.error('daily task error:', e?.response?.body || e); }
+    }, MS_IN_DAY);
+  }, d);
+}
+
+// Targets helper
+function getTargets() {
   const targets = new Set(ActiveChats);
   if (ANNOUNCE_CHAT) targets.add(String(ANNOUNCE_CHAT));
-  for (const cid of targets) {
+  return targets;
+}
+
+// Daily messages
+async function sendDailyHandover() {
+  for (const cid of getTargets()) {
+    try {
+      await bot.sendMessage(cid, '🔔 10:00 SGT — Handover time.');
+      await sendListInteractive(cid);
+    } catch (e) { console.error('handover send error for', cid, e?.response?.body || e); }
+  }
+}
+async function sendDailyEOD() {
+  for (const cid of getTargets()) {
+    try {
+      await bot.sendMessage(cid, '🔔 17:00 SGT — End of day.');
+      await sendListInteractive(cid);
+    } catch (e) { console.error('EOD send error for', cid, e?.response?.body || e); }
+  }
+}
+async function sendDailyMorningPoll() {
+  for (const cid of getTargets()) {
+    try {
+      await bot.sendPoll(
+        cid,
+        'Good morning commanders, please indicate whether you will be in camp for today',
+        ['Yes', 'No', 'MA/MC', 'OL', 'LL', 'OFF'],
+        { is_anonymous: false, allows_multiple_answers: false }
+      );
+    } catch (e) { console.error('poll send error for', cid, e?.response?.body || e); }
+  }
+}
+
+// ===== Reminders / Awake / Sleep =====
+async function broadcastAwake() {
+  for (const cid of getTargets()) {
     try { await bot.sendMessage(cid, '👋 The bot is awake.'); await sendListInteractive(cid); }
     catch (e) { console.warn('awake send failed for', cid, e?.response?.body || e); }
   }
 }
 async function sendReminder(prefix) {
-  const targets = new Set(ActiveChats);
-  if (ANNOUNCE_CHAT) targets.add(String(ANNOUNCE_CHAT));
-  for (const cid of targets) {
+  for (const cid of getTargets()) {
     try { await bot.sendMessage(cid, prefix); await sendListInteractive(cid); }
     catch (e) { console.error('reminder error for', cid, e?.response?.body || e); }
   }
 }
 async function sendSleepWarning() {
-  const targets = new Set(ActiveChats);
-  if (ANNOUNCE_CHAT) targets.add(String(ANNOUNCE_CHAT));
-  for (const cid of targets) {
+  for (const cid of getTargets()) {
     try { await bot.sendMessage(cid, '😴 The bot is going to sleep soon.'); }
     catch {}
   }
@@ -420,7 +436,7 @@ async function sendSleepWarning() {
 
     await bot.startPolling({
       interval: 300,
-      params: { timeout: 50, allowed_updates: ['message'] }, // poll messages (polls are messages)
+      params: { timeout: 50, allowed_updates: ['message'] }, // reply-keyboard flow only
     });
     console.log('📡 Polling started.');
 
@@ -429,9 +445,14 @@ async function sendSleepWarning() {
     // Hello
     await broadcastAwake();
 
-    // Reminders at 20 and 25 minutes (regardless of duration length)
+    // Timed reminders (relative to start) — keep your 20/25 min nudges
     setTimeout(() => sendReminder('⏱️ 20 minutes gone.'), 20 * 60 * 1000);
     setTimeout(() => sendReminder('⏱️ 25 minutes gone.'), 25 * 60 * 1000);
+
+    // Daily SGT schedules (fire once per day while bot is running)
+    scheduleDailyAtSgt(6,  0, sendDailyMorningPoll); // 06:00 SGT poll
+    scheduleDailyAtSgt(10, 0, sendDailyHandover);     // 10:00 SGT
+    scheduleDailyAtSgt(17, 0, sendDailyEOD);          // 17:00 SGT
 
     // Auto-stop + warning + reset checks
     if (DURATION_MINUTES > 0) {
