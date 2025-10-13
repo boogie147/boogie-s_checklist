@@ -159,14 +159,28 @@ function formatUser(u) {
 }
 
 // ===== Morning poll helper (for /testpoll) =====
-async function sendMorningPoll(cid) {
-  return bot.sendPoll(
-    cid,
-    'Good morning commanders, please indicate whether you will be in camp for today',
-    ['Yes','No','MA/MC/RSO','OL','LL','OFF'],
-    { is_anonymous: false, allows_multiple_answers: true, open_period: 10800 }
-  );
+async function sendAttendancePoll(cid) {
+  const question = 'Good morning commanders, please indicate whether you will be in camp for today';
+  const options = ['Yes', 'No', 'MA/MC', 'OL', 'LL', 'OFF'];
+
+  // Create a regular (non-quiz), non-anonymous poll; users can change votes while open.
+  const msg = await bot.sendPoll(cid, question, options, {
+    is_anonymous: false,
+    allows_multiple_answers: false
+    // DO NOT set open_period / close_date – they cap at 600s
+  });
+
+  // Try to close it in 3 hours (3 * 3600 * 1000 ms)
+  setTimeout(async () => {
+    try {
+      await bot.stopPoll(cid, msg.message_id);
+      if (VERBOSE) console.log('Poll closed after 3h:', cid, msg.message_id);
+    } catch (e) {
+      console.warn('Could not stopPoll (maybe bot stopped or poll already closed):', e?.response?.body || e);
+    }
+  }, 3 * 3600 * 1000);
 }
+
 
 // ===== Welcome (once per run per chat) =====
 const WelcomedThisRun = new Set();
