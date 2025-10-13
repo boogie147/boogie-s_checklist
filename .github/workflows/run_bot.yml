@@ -2,15 +2,16 @@ name: Run Telegram Checklist Bot
 
 on:
   schedule:
-    # Weekdays only (Mon–Fri). Times are UTC:
-    - cron: '0 22 * * 1-5'  # 06:00 AM SGT (22:00 UTC)
-    - cron: '0 4 * * 1-5'   # 12:00 PM SGT (08:00 UTC)
+    # 06:00 SGT Mon–Fri  (SGT = UTC+8 => 22:00 UTC previous day, Sun–Thu)
+    - cron: '0 22 * * 0-4'
+    # 12:00 SGT Mon–Fri  (SGT = UTC+8 => 04:00 UTC Mon–Fri)
+    - cron: '0 4 * * 1-5'
   workflow_dispatch:
     inputs:
       duration_minutes:
-        description: "How long to keep the bot online (minutes)"
+        description: "How long to keep the bot online (minutes) [optional]"
         required: false
-        default: "360"
+        default: ""
       announce_chat_id:
         description: "Chat ID to announce wake/reminders to (optional)"
         required: false
@@ -31,7 +32,8 @@ concurrency:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    # Give a little buffer above each run length
+    timeout-minutes: 500
     permissions:
       contents: write
 
@@ -63,12 +65,41 @@ jobs:
             echo "Initialized new checklists.json."
           fi
 
+      - name: Determine run kind & duration
+        id: decide
+        shell: bash
+        run: |
+          # Default values
+          RUN_KIND="manual"
+          DURATION="420"  # fallback 7h if we don't know
+
+          # If triggered by a cron schedule, github.event.schedule contains the cron string
+          if [[ -n "${{ github.event.schedule }}" ]]; then
+            CRON="${{ github.event.schedule }}"
+            if [[ "$CRON" == "0 22 * * 0-4" ]]; then
+              RUN_KIND="morning"
+              DURATION="240"     # 4 hours (06:00→10:00 SGT)
+            elif [[ "$CRON" == "0 4 * * 1-5" ]]; then
+              RUN_KIND="noon"
+              DURATION="420"     # 7 hours (12:00→19:00 SGT)
+            fi
+          fi
+
+          # Manual override from dispatch input if provided
+          if [[ -n "${{ github.event.inputs.duration_minutes }}" ]]; then
+            DURATION="${{ github.event.inputs.duration_minutes }}"
+          fi
+
+          echo "run_kind=$RUN_KIND" >> $GITHUB_OUTPUT
+          echo "duration=$DURATION" >> $GITHUB_OUTPUT
+
       - name: Run bot (interactive for duration)
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           DROP_PENDING: 'true'
           CHAT_ID: ${{ github.event.inputs.announce_chat_id || secrets.CHAT_ID }}
-          DURATION_MINUTES: ${{ github.event.inputs.duration_minutes || '30' }}
+          DURATION_MINUTES: ${{ steps.decide.outputs.duration }}
+          RUN_KIND: ${{ steps.decide.outputs.run_kind }}
           VERBOSE: ${{ github.event.inputs.verbose || 'false' }}
         run: node checklist.js
 
