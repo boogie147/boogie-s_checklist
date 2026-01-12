@@ -103,6 +103,12 @@ function buildReplyKeyboard(cid) {
   };
 }
 
+// Convenience: always send a “status” message WITH the reply keyboard.
+// This prevents Telegram clients from hiding the menu after non-keyboard messages.
+async function sendWithKeyboard(cid, text, extra = {}) {
+  return bot.sendMessage(cid, text, { ...extra, ...buildReplyKeyboard(cid) });
+}
+
 // Track & ensure state shell exists
 function ensureChatTracked(cid){
   const k = String(cid);
@@ -164,7 +170,9 @@ async function maybeWelcome(cid, newlyTracked) {
   if (WelcomedThisRun.has(cid)) return;
   WelcomedThisRun.add(cid);
   if (newlyTracked) saveData(DB);
-  await bot.sendMessage(cid, '👋 Hello! The bot is awake. Use the keyboard below or type a task.');
+
+  // Send welcome WITH keyboard so the menu shows immediately (especially in groups/mobile).
+  await sendWithKeyboard(cid, '👋 Hello! The bot is awake. Use the keyboard below or type a task.');
   await sendListInteractive(cid);
 }
 
@@ -177,6 +185,7 @@ const HEARTBEAT = setInterval(() => { if (VERBOSE) console.log('…heartbeat'); 
 bot.onText(cmdRe('start'), async (msg) => {
   const cid = msg.chat.id; const added = ensureChatTracked(cid);
   await maybeWelcome(cid, added);
+
   await bot.sendMessage(cid,
     ['<b>Checklist Bot</b> is awake 👋',
      'Use buttons or commands:',
@@ -188,36 +197,41 @@ bot.onText(cmdRe('start'), async (msg) => {
      '• /allow (admin, reply to a user)',
      '• /deny  (admin, reply to a user)',
      '• /whoallowed'].join('\n'),
-    { parse_mode:'HTML' }
+    { parse_mode:'HTML', ...buildReplyKeyboard(cid) } // keep keyboard visible
   );
 });
+
 bot.onText(cmdRe('add', true), async (msg, m) => {
   const cid = msg.chat.id; const added = ensureChatTracked(cid);
   await maybeWelcome(cid, added);
-  if (!(await canUserAdd(msg))) return bot.sendMessage(cid, '🚫 You are not allowed to add tasks in this chat.');
-  const text = (m[1] || '').trim(); if (!text) return bot.sendMessage(cid, 'Usage: /add <task>');
+  if (!(await canUserAdd(msg))) return sendWithKeyboard(cid, '🚫 You are not allowed to add tasks in this chat.');
+  const text = (m[1] || '').trim(); if (!text) return sendWithKeyboard(cid, 'Usage: /add <task>');
   getList(cid).push({ text, done:false }); saveData(DB);
   await sendListInteractive(cid);
 });
+
 bot.onText(cmdRe('list'), async (msg) => {
   const cid = msg.chat.id; const added = ensureChatTracked(cid);
   await maybeWelcome(cid, added);
   await sendListInteractive(cid);
 });
+
 bot.onText(cmdRe('done', true), async (msg, m) => {
   const cid = msg.chat.id; const added = ensureChatTracked(cid);
   await maybeWelcome(cid, added);
   const i = parseInt(m[1],10)-1; const items = getList(cid);
   if (i>=0 && i<items.length) { items[i].done = true; saveData(DB); await sendListInteractive(cid); }
-  else await bot.sendMessage(cid, 'Usage: /done <number>');
+  else await sendWithKeyboard(cid, 'Usage: /done <number>');
 });
+
 bot.onText(cmdRe('remove', true), async (msg, m) => {
   const cid = msg.chat.id; const added = ensureChatTracked(cid);
   await maybeWelcome(cid, added);
   const i = parseInt(m[1],10)-1; const items = getList(cid);
   if (i>=0 && i<items.length) { items.splice(i,1); saveData(DB); await sendListInteractive(cid); }
-  else await bot.sendMessage(cid, 'Usage: /remove <number>');
+  else await sendWithKeyboard(cid, 'Usage: /remove <number>');
 });
+
 bot.onText(cmdRe('clear'), async (msg) => {
   const cid = msg.chat.id; const added = ensureChatTracked(cid);
   await maybeWelcome(cid, added);
@@ -228,32 +242,38 @@ bot.onText(cmdRe('clear'), async (msg) => {
 // Allowlist admin
 bot.onText(cmdRe('allow'), async (msg) => {
   const cid = msg.chat.id;
-  if (!(await isAdmin(cid, msg.from.id))) return bot.sendMessage(cid, 'Only admins can use /allow.');
-  if (!msg.reply_to_message || !msg.reply_to_message.from) return bot.sendMessage(cid, 'Reply to the user’s message with /allow.');
+  if (!(await isAdmin(cid, msg.from.id))) return sendWithKeyboard(cid, 'Only admins can use /allow.');
+  if (!msg.reply_to_message || !msg.reply_to_message.from) return sendWithKeyboard(cid, 'Reply to the user’s message with /allow.');
   const target = msg.reply_to_message.from;
   const allow = getAllow(cid);
   if (!allow.includes(target.id)) { allow.push(target.id); saveData(DB); }
-  await bot.sendMessage(cid, `✅ Allowed: ${formatUser(target)}`, { parse_mode:'HTML' });
+  await bot.sendMessage(cid, `✅ Allowed: ${formatUser(target)}`, { parse_mode:'HTML', ...buildReplyKeyboard(cid) });
 });
+
 bot.onText(cmdRe('deny'), async (msg) => {
   const cid = msg.chat.id;
-  if (!(await isAdmin(cid, msg.from.id))) return bot.sendMessage(cid, 'Only admins can use /deny.');
-  if (!msg.reply_to_message || !msg.reply_to_message.from) return bot.sendMessage(cid, 'Reply to the user’s message with /deny.');
+  if (!(await isAdmin(cid, msg.from.id))) return sendWithKeyboard(cid, 'Only admins can use /deny.');
+  if (!msg.reply_to_message || !msg.reply_to_message.from) return sendWithKeyboard(cid, 'Reply to the user’s message with /deny.');
   const target = msg.reply_to_message.from;
   const allow = getAllow(cid);
   const idx = allow.indexOf(target.id);
-  if (idx >= 0) { allow.splice(idx, 1); saveData(DB); await bot.sendMessage(cid, `🚫 Removed from allowlist: ${formatUser(target)}`, { parse_mode:'HTML' }); }
-  else { await bot.sendMessage(cid, `${formatUser(target)} was not on the allowlist.`, { parse_mode:'HTML' }); }
+  if (idx >= 0) {
+    allow.splice(idx, 1); saveData(DB);
+    await bot.sendMessage(cid, `🚫 Removed from allowlist: ${formatUser(target)}`, { parse_mode:'HTML', ...buildReplyKeyboard(cid) });
+  } else {
+    await bot.sendMessage(cid, `${formatUser(target)} was not on the allowlist.`, { parse_mode:'HTML', ...buildReplyKeyboard(cid) });
+  }
 });
+
 bot.onText(cmdRe('whoallowed'), async (msg) => {
   const cid = msg.chat.id; const allow = getAllow(cid);
-  if (allow.length === 0) return bot.sendMessage(cid, 'No one is on the allowlist yet.');
+  if (allow.length === 0) return sendWithKeyboard(cid, 'No one is on the allowlist yet.');
   const lines = [];
   for (const uid of allow) {
     try { const m = await bot.getChatMember(cid, uid); const u = m.user || { id: uid }; lines.push(`• ${formatUser(u)}`); }
     catch { lines.push(`• id:${uid}`); }
   }
-  await bot.sendMessage(cid, `<b>Allowlist</b>\n${lines.join('\n')}`, { parse_mode:'HTML' });
+  await bot.sendMessage(cid, `<b>Allowlist</b>\n${lines.join('\n')}`, { parse_mode:'HTML', ...buildReplyKeyboard(cid) });
 });
 
 // ===== Reply keyboard actions & free text =====
@@ -283,25 +303,27 @@ bot.on('message', async (msg) => {
   }
 
   if (msg.text === '🗑 Remove mode') {
-    if (!(await canUserAdd(msg))) { await bot.sendMessage(cid, '🚫 You are not allowed to remove in this chat.'); return; }
+    if (!(await canUserAdd(msg))) { await sendWithKeyboard(cid, '🚫 You are not allowed to remove in this chat.'); return; }
     setRemoveMode(cid, true); saveData(DB);
-    await bot.sendMessage(cid, 'Remove mode ON. Tap any item button to delete it, or press “✅ Done removing”.');
+    await sendWithKeyboard(cid, 'Remove mode ON. Tap any item button to delete it, or press “✅ Done removing”.');
     return;
   }
   if (msg.text === '✅ Done removing') {
     setRemoveMode(cid, false); saveData(DB);
-    await bot.sendMessage(cid, 'Remove mode OFF.');
+    await sendWithKeyboard(cid, 'Remove mode OFF.');
     return;
   }
 
   if (msg.text === '➕ Add') {
+    // Note: force_reply changes UX; we also include keyboard again right after to reduce “menu vanished” reports.
     await bot.sendMessage(cid, 'Send the task text:', { reply_markup: { force_reply: true } });
+    await sendListInteractive(cid);
     return;
   }
 
   // Add via force-reply
   if (msg.reply_to_message && /Send the task text:/.test(msg.reply_to_message.text || '')) {
-    if (!(await canUserAdd(msg))) { await bot.sendMessage(cid, `🚫 You are not allowed to add tasks in this chat.`); return; }
+    if (!(await canUserAdd(msg))) { await sendWithKeyboard(cid, '🚫 You are not allowed to add tasks in this chat.'); return; }
     const t = msg.text.trim(); if (!t) return;
     getList(cid).push({ text:t, done:false }); saveData(DB);
     await sendListInteractive(cid); return;
@@ -314,7 +336,7 @@ bot.on('message', async (msg) => {
     const items = getList(cid);
     if (n >= 0 && n < items.length) {
       if (isRemoveMode(cid)) {
-        if (!(await canUserAdd(msg))) { await bot.sendMessage(cid, `🚫 You are not allowed to remove tasks in this chat.`); return; }
+        if (!(await canUserAdd(msg))) { await sendWithKeyboard(cid, '🚫 You are not allowed to remove tasks in this chat.'); return; }
         items.splice(n, 1); saveData(DB);
       } else {
         items[n].done = !items[n].done; saveData(DB);
@@ -330,7 +352,7 @@ bot.on('message', async (msg) => {
   }
 
   // Free text add (fallback)
-  if (!(await canUserAdd(msg))) { await bot.sendMessage(cid, `🚫 You are not allowed to add tasks in this chat.`); return; }
+  if (!(await canUserAdd(msg))) { await sendWithKeyboard(cid, '🚫 You are not allowed to add tasks in this chat.'); return; }
   const t = msg.text.trim(); if (!t) return;
   getList(cid).push({ text:t, done:false }); saveData(DB);
   await sendListInteractive(cid);
@@ -338,6 +360,7 @@ bot.on('message', async (msg) => {
 
 // ===== Timed helpers (SGT scheduling) =====
 const MS_IN_DAY = 24 * 60 * 60 * 1000;
+
 // Returns ms until the next SGT clock time (hour:0-23, minute:0-59)
 function msUntilNextSgt(hour, minute) {
   const now = new Date();
@@ -348,6 +371,7 @@ function msUntilNextSgt(hour, minute) {
   if (delta < 0) delta += MS_IN_DAY; // next day
   return delta;
 }
+
 // Schedule a daily task at SGT time
 function scheduleDailyAtSgt(hour, minute, fn) {
   const d = msUntilNextSgt(hour, minute);
@@ -372,28 +396,33 @@ function getTargets() {
 async function sendDailyHandover() {
   for (const cid of getTargets()) {
     try {
-      await bot.sendMessage(cid, '🔔 10:00 SGT — Handover time.');
+      // Send message WITH keyboard, then refresh list.
+      await sendWithKeyboard(cid, '🔔 10:00 SGT — Handover time.');
       await sendListInteractive(cid);
     } catch (e) { console.error('handover send error for', cid, e?.response?.body || e); }
   }
 }
+
 async function sendDailyEOD() {
   for (const cid of getTargets()) {
     try {
-      await bot.sendMessage(cid, '🔔 17:00 SGT — End of day.');
+      await sendWithKeyboard(cid, '🔔 17:00 SGT — End of day.');
       await sendListInteractive(cid);
     } catch (e) { console.error('EOD send error for', cid, e?.response?.body || e); }
   }
 }
+
 async function sendDailyMorningPoll() {
   for (const cid of getTargets()) {
     try {
+      // Poll cannot include reply keyboard; follow immediately with list to re-show keyboard.
       await bot.sendPoll(
         cid,
         'Good morning commanders, please indicate whether you will be in camp for today',
         ['Yes', 'No', 'MA/MC', 'OL', 'LL', 'OFF'],
         { is_anonymous: false, allows_multiple_answers: false }
       );
+      await sendListInteractive(cid);
     } catch (e) { console.error('poll send error for', cid, e?.response?.body || e); }
   }
 }
@@ -401,19 +430,25 @@ async function sendDailyMorningPoll() {
 // ===== Reminders / Awake / Sleep =====
 async function broadcastAwake() {
   for (const cid of getTargets()) {
-    try { await bot.sendMessage(cid, '👋 The bot is awake.'); await sendListInteractive(cid); }
-    catch (e) { console.warn('awake send failed for', cid, e?.response?.body || e); }
+    try {
+      await sendWithKeyboard(cid, '👋 The bot is awake.');
+      await sendListInteractive(cid);
+    } catch (e) { console.warn('awake send failed for', cid, e?.response?.body || e); }
   }
 }
+
 async function sendReminder(prefix) {
   for (const cid of getTargets()) {
-    try { await bot.sendMessage(cid, prefix); await sendListInteractive(cid); }
-    catch (e) { console.error('reminder error for', cid, e?.response?.body || e); }
+    try {
+      await sendWithKeyboard(cid, prefix);
+      await sendListInteractive(cid);
+    } catch (e) { console.error('reminder error for', cid, e?.response?.body || e); }
   }
 }
+
 async function sendSleepWarning() {
   for (const cid of getTargets()) {
-    try { await bot.sendMessage(cid, '😴 The bot is going to sleep soon.'); }
+    try { await sendWithKeyboard(cid, '😴 The bot is going to sleep soon.'); }
     catch {}
   }
 }
