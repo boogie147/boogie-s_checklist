@@ -78,5 +78,27 @@
     "allow": [],
     "removeMode": false,
     "compact": true
+  },
+  "meta": {
+    "version": 2
+  },
+  "group": {
+    "-1002768068819": {
+      "items": [
+        {
+          "text": "Clear desk policy",
+          "done": true
+        }
+      ],
+      "allow": [],
+      "duty": {
+        "userId": 6171407541,
+        "dmChatId": 6171407541,
+        "name": "Hong Kai",
+        "startedAtIso": "2026-01-15T06:35:00.471Z"
+      },
+      "removeMode": false,
+      "compact": false
+    }
   }
 }
