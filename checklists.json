@@ -28,6 +28,10 @@
       {
         "text": "Update ration status in COS chat for every meal",
         "done": false
+      },
+      {
+        "text": "Off microwave switch",
+        "done": false
       }
     ],
     "allow": [],
