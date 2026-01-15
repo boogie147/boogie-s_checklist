@@ -297,7 +297,7 @@ async function sendMorningPollToGroup() {
   await bot.sendPoll(
     GROUP_CHAT_ID,
     "Good morning commanders, please indicate whether you will be in camp for today",
-    ["Yes", "No", "MA/MC", "OL", "LL", "OFF"],
+    ["Yes", "No", "MA/MC", "OL", "LL", "OFF", "COS Only"],
     { is_anonymous: false, allows_multiple_answers: false }
   );
 }
