@@ -5,7 +5,7 @@ const path = require('path');
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 if (!BOT_TOKEN) {
-  console.error('❌ BOT_TOKEN is missing (set it in your CI/CD secrets).');
+  console.error('❌ BOT_TOKEN is missing (set it in GitHub Secrets).');
   process.exit(1);
 }
 
@@ -18,13 +18,9 @@ const ADD_REQUIRE_ALLOWLIST = String(process.env.ADD_REQUIRE_ALLOWLIST || 'true'
 const DROP_PENDING = String(process.env.DROP_PENDING || 'true') === 'true';
 const DEFAULT_COMPACT = String(process.env.COMPACT || 'false') === 'true'; // default per-chat view
 
-// Menu recovery knobs
-const MENU_RECOVERY_PHRASES = [
-  'menu', 'buttons', 'keyboard', 'controls', 'show menu', 'show keyboard'
-];
-
-// No polling yet; we’ll clear webhook then start
+// NOTE: we MUST allow callback_query now (for inline restore button)
 const bot = new TelegramBot(BOT_TOKEN, { polling: false });
+
 const cmdRe = (name, hasArg = false) =>
   new RegExp(`^\\/${name}(?:@\\w+)?${hasArg ? "\\s+(.+)" : "\\s*$"}`, "i");
 
@@ -47,8 +43,16 @@ let DB = loadData();
  */
 function getState(cid) {
   let v = DB[cid];
-  if (!v) { v = { items: [], allow: [], removeMode: false, compact: DEFAULT_COMPACT }; DB[cid] = v; return v; }
-  if (Array.isArray(v)) { v = { items: v, allow: [], removeMode: false, compact: DEFAULT_COMPACT }; DB[cid] = v; return v; }
+  if (!v) {
+    v = { items: [], allow: [], removeMode: false, compact: DEFAULT_COMPACT };
+    DB[cid] = v;
+    return v;
+  }
+  if (Array.isArray(v)) {
+    v = { items: v, allow: [], removeMode: false, compact: DEFAULT_COMPACT };
+    DB[cid] = v;
+    return v;
+  }
   if (!Array.isArray(v.items)) v.items = [];
   if (!Array.isArray(v.allow)) v.allow = [];
   if (typeof v.removeMode !== 'boolean') v.removeMode = false;
@@ -66,7 +70,9 @@ const setCompact    = (cid, on) => { getState(cid).compact = !!on; };
 const ActiveChats = new Set(Object.keys(DB));
 
 // ===== Utils =====
-const escapeHtml = (s) => s.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+const escapeHtml = (s) => s.replace(/[&<>"']/g, m => ({
+  '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+}[m]));
 const truncate = (s,n)=> s && s.length>n ? s.slice(0,n-1)+'…' : s;
 
 function renderLines(items) {
@@ -92,7 +98,7 @@ function buildReplyKeyboard(cid) {
   const rows = [
     [ { text:'➕ Add' }, { text:'🔄 Refresh' } ],
     [ { text: isRemoveMode(cid) ? '✅ Done removing' : '🗑 Remove mode' }, { text:'🧹 Clear checks' } ],
-    [ { text: isCompact(cid) ? '📝 Full view' : '📋 Compact view' }, { text:'📌 Show menu' } ],
+    [ { text: isCompact(cid) ? '📝 Full view' : '📋 Compact view' } ],
   ];
   for (let i=0;i<items.length;i++){
     rows.push([ { text: itemButtonLabel(items[i], i) } ]);
@@ -119,14 +125,11 @@ function ensureChatTracked(cid){
 // Core send
 async function sendListInteractive(cid) {
   const items = getList(cid);
-  const body = isCompact(cid) ? renderHeader(items) : `<b>Your checklist</b>\n${renderLines(items)}`;
-  return bot.sendMessage(cid, body, { parse_mode:'HTML', ...buildReplyKeyboard(cid) });
-}
+  const body = isCompact(cid)
+    ? renderHeader(items)
+    : `<b>Your checklist</b>\n${renderLines(items)}`;
 
-// Send a plain message but always re-attach keyboard immediately after (mobile-friendly)
-async function sendWithMenu(cid, text, extra = {}) {
-  await bot.sendMessage(cid, text, extra);
-  await sendListInteractive(cid);
+  return bot.sendMessage(cid, body, { parse_mode:'HTML', ...buildReplyKeyboard(cid) });
 }
 
 // Clear checkmarks (keep text)
@@ -168,14 +171,67 @@ function formatUser(u) {
   return `${escapeHtml(name)} (${u.id})`;
 }
 
+// ===== Inline "Restore Menu" message (one per chat) =====
+// We keep this in memory (doesn't need to be persisted)
+const RestoreMenuMsgId = new Map(); // chatId(string) -> message_id(number)
+
+function restoreMenuInlineMarkup() {
+  return {
+    inline_keyboard: [
+      [{ text: '🔁 Restore Menu', callback_data: 'restore_menu' }]
+    ]
+  };
+}
+
+// Upsert a single inline message per chat to avoid spam
+async function upsertRestoreMenuMessage(cid) {
+  const chatKey = String(cid);
+  const existingId = RestoreMenuMsgId.get(chatKey);
+
+  const text =
+    'If your menu disappears on mobile, tap below to restore it.';
+
+  // Try to edit existing message if we have one
+  if (existingId) {
+    try {
+      // Edit text to keep it fresh (and keep the button)
+      await bot.editMessageText(text, {
+        chat_id: cid,
+        message_id: existingId,
+        reply_markup: restoreMenuInlineMarkup()
+      });
+      return;
+    } catch (e) {
+      // If edit fails (message deleted / too old / etc.), we will send a new one
+      if (VERBOSE) console.warn('restore menu edit failed, sending new:', e?.response?.body || e);
+      RestoreMenuMsgId.delete(chatKey);
+    }
+  }
+
+  // Send new
+  try {
+    const sent = await bot.sendMessage(cid, text, {
+      reply_markup: restoreMenuInlineMarkup()
+    });
+    RestoreMenuMsgId.set(chatKey, sent.message_id);
+  } catch (e) {
+    // Don't crash bot if this fails
+    if (VERBOSE) console.warn('restore menu send failed:', e?.response?.body || e);
+  }
+}
+
 // ===== Welcome (once per run per chat) =====
 const WelcomedThisRun = new Set();
 async function maybeWelcome(cid, newlyTracked) {
   if (WelcomedThisRun.has(cid)) return;
   WelcomedThisRun.add(cid);
   if (newlyTracked) saveData(DB);
-  // IMPORTANT: attach keyboard in the next message (mobile)
-  await sendWithMenu(cid, '👋 Hello! The bot is awake. Use the keyboard below or type a task.');
+
+  await bot.sendMessage(cid, '👋 Hello! The bot is awake. Use the keyboard below or type a task.');
+  await sendListInteractive(cid);
+
+  // Create the inline restore message once (non-spammy)
+  await upsertRestoreMenuMessage(cid);
 }
 
 // ===== Logging & safety =====
@@ -187,28 +243,29 @@ const HEARTBEAT = setInterval(() => { if (VERBOSE) console.log('…heartbeat'); 
 bot.onText(cmdRe('start'), async (msg) => {
   const cid = msg.chat.id; const added = ensureChatTracked(cid);
   await maybeWelcome(cid, added);
-  // re-attach menu after help text too (mobile)
+
   await bot.sendMessage(cid,
     ['<b>Checklist Bot</b> is awake 👋',
      'Use buttons or commands:',
      '• /add &lt;text&gt;',
      '• /list',
+     '• /menu (restore menu)',
      '• /done &lt;number&gt;',
      '• /remove &lt;number&gt;',
      '• /clear (uncheck all)',
      '• /allow (admin, reply to a user)',
      '• /deny  (admin, reply to a user)',
-     '• /whoallowed',
-     '• /menu (show keyboard if hidden)'].join('\n'),
+     '• /whoallowed'].join('\n'),
     { parse_mode:'HTML' }
   );
-  await sendListInteractive(cid);
 });
 
+// NEW: /menu command — re-push reply keyboard + ensure restore button message exists
 bot.onText(cmdRe('menu'), async (msg) => {
   const cid = msg.chat.id; const added = ensureChatTracked(cid);
   await maybeWelcome(cid, added);
   await sendListInteractive(cid);
+  await upsertRestoreMenuMessage(cid);
 });
 
 bot.onText(cmdRe('add', true), async (msg, m) => {
@@ -224,6 +281,8 @@ bot.onText(cmdRe('list'), async (msg) => {
   const cid = msg.chat.id; const added = ensureChatTracked(cid);
   await maybeWelcome(cid, added);
   await sendListInteractive(cid);
+  // Keep the restore button message available
+  await upsertRestoreMenuMessage(cid);
 });
 
 bot.onText(cmdRe('done', true), async (msg, m) => {
@@ -258,7 +317,6 @@ bot.onText(cmdRe('allow'), async (msg) => {
   const allow = getAllow(cid);
   if (!allow.includes(target.id)) { allow.push(target.id); saveData(DB); }
   await bot.sendMessage(cid, `✅ Allowed: ${formatUser(target)}`, { parse_mode:'HTML' });
-  await sendListInteractive(cid);
 });
 
 bot.onText(cmdRe('deny'), async (msg) => {
@@ -270,91 +328,112 @@ bot.onText(cmdRe('deny'), async (msg) => {
   const idx = allow.indexOf(target.id);
   if (idx >= 0) { allow.splice(idx, 1); saveData(DB); await bot.sendMessage(cid, `🚫 Removed from allowlist: ${formatUser(target)}`, { parse_mode:'HTML' }); }
   else { await bot.sendMessage(cid, `${formatUser(target)} was not on the allowlist.`, { parse_mode:'HTML' }); }
-  await sendListInteractive(cid);
 });
 
 bot.onText(cmdRe('whoallowed'), async (msg) => {
   const cid = msg.chat.id; const allow = getAllow(cid);
-  if (allow.length === 0) { await bot.sendMessage(cid, 'No one is on the allowlist yet.'); await sendListInteractive(cid); return; }
+  if (allow.length === 0) return bot.sendMessage(cid, 'No one is on the allowlist yet.');
   const lines = [];
   for (const uid of allow) {
     try { const m = await bot.getChatMember(cid, uid); const u = m.user || { id: uid }; lines.push(`• ${formatUser(u)}`); }
     catch { lines.push(`• id:${uid}`); }
   }
   await bot.sendMessage(cid, `<b>Allowlist</b>\n${lines.join('\n')}`, { parse_mode:'HTML' });
-  await sendListInteractive(cid);
+  // Sometimes iOS hides reply keyboard after messages; keep restore available
+  await upsertRestoreMenuMessage(cid);
+});
+
+// ===== Inline button callback handler =====
+bot.on('callback_query', async (q) => {
+  try {
+    const cid = q.message?.chat?.id;
+    if (!cid) {
+      await bot.answerCallbackQuery(q.id, { text: 'OK', show_alert: false });
+      return;
+    }
+
+    // Ensure chat tracked (so it becomes a target)
+    ensureChatTracked(cid);
+
+    if (q.data === 'restore_menu') {
+      // Acknowledge quickly (prevents Telegram spinner)
+      await bot.answerCallbackQuery(q.id, { text: 'Menu restored.', show_alert: false });
+
+      // Re-push the reply keyboard & list
+      await sendListInteractive(cid);
+
+      // Keep the restore message available (update in case it was lost)
+      await upsertRestoreMenuMessage(cid);
+      return;
+    }
+
+    await bot.answerCallbackQuery(q.id, { text: 'OK', show_alert: false });
+  } catch (e) {
+    // Never crash on callback errors
+    try { await bot.answerCallbackQuery(q.id, { text: 'Error.', show_alert: false }); } catch {}
+    if (VERBOSE) console.warn('callback_query error:', e?.response?.body || e);
+  }
 });
 
 // ===== Reply keyboard actions & free text =====
 bot.on('message', async (msg) => {
   if (!msg.text) return;
-
-  // Ignore known slash commands handled by onText
   if (/^\/(start|menu|add|list|done|remove|clear|allow|deny|whoallowed)/i.test(msg.text)) return;
 
   const cid = msg.chat.id;
   const added = ensureChatTracked(cid);
   await maybeWelcome(cid, added);
 
-  const text = msg.text.trim();
-
-  // ===== Menu recovery fallback (works even when keyboard is hidden) =====
-  const tLower = text.toLowerCase();
-  if (text === '📌 Show menu' || MENU_RECOVERY_PHRASES.some(p => tLower === p)) {
-    await sendListInteractive(cid);
-    return;
-  }
-
   // Global buttons
-  if (text === '🔄 Refresh') { await sendListInteractive(cid); return; }
+  if (msg.text === '🔄 Refresh') { await sendListInteractive(cid); return; }
 
-  if (text === '🧹 Clear checks') {
+  if (msg.text === '🧹 Clear checks') {
     const { changed } = uncheckAll(cid); if (changed) saveData(DB);
     await sendListInteractive(cid); return;
   }
 
-  if (text === '📋 Compact view') {
+  if (msg.text === '📋 Compact view') {
     setCompact(cid, true); saveData(DB);
     await sendListInteractive(cid); return;
   }
-  if (text === '📝 Full view') {
+  if (msg.text === '📝 Full view') {
     setCompact(cid, false); saveData(DB);
     await sendListInteractive(cid); return;
   }
 
-  if (text === '🗑 Remove mode') {
-    if (!(await canUserAdd(msg))) { await bot.sendMessage(cid, '🚫 You are not allowed to remove in this chat.'); await sendListInteractive(cid); return; }
+  if (msg.text === '🗑 Remove mode') {
+    if (!(await canUserAdd(msg))) { await bot.sendMessage(cid, '🚫 You are not allowed to remove in this chat.'); return; }
     setRemoveMode(cid, true); saveData(DB);
-    await sendWithMenu(cid, 'Remove mode ON. Tap any item button to delete it, or press “✅ Done removing”.');
+    await bot.sendMessage(cid, 'Remove mode ON. Tap any item button to delete it, or press “✅ Done removing”.');
     return;
   }
-  if (text === '✅ Done removing') {
+  if (msg.text === '✅ Done removing') {
     setRemoveMode(cid, false); saveData(DB);
-    await sendWithMenu(cid, 'Remove mode OFF.');
+    await bot.sendMessage(cid, 'Remove mode OFF.');
     return;
   }
 
-  if (text === '➕ Add') {
+  if (msg.text === '➕ Add') {
     await bot.sendMessage(cid, 'Send the task text:', { reply_markup: { force_reply: true } });
     return;
   }
 
   // Add via force-reply
   if (msg.reply_to_message && /Send the task text:/.test(msg.reply_to_message.text || '')) {
-    if (!(await canUserAdd(msg))) { await bot.sendMessage(cid, `🚫 You are not allowed to add tasks in this chat.`); await sendListInteractive(cid); return; }
-    const t = text; if (!t) return;
+    if (!(await canUserAdd(msg))) { await bot.sendMessage(cid, `🚫 You are not allowed to add tasks in this chat.`); return; }
+    const t = msg.text.trim(); if (!t) return;
     getList(cid).push({ text:t, done:false }); saveData(DB);
     await sendListInteractive(cid); return;
   }
 
   // Item buttons: match "#N"
-  const m = text.match(/#(\d+)/);
+  const m = msg.text.match(/#(\d+)/);
   if (m) {
     const n = parseInt(m[1], 10) - 1;
     const items = getList(cid);
     if (n >= 0 && n < items.length) {
       if (isRemoveMode(cid)) {
-        if (!(await canUserAdd(msg))) { await bot.sendMessage(cid, `🚫 You are not allowed to remove tasks in this chat.`); await sendListInteractive(cid); return; }
+        if (!(await canUserAdd(msg))) { await bot.sendMessage(cid, `🚫 You are not allowed to remove tasks in this chat.`); return; }
         items.splice(n, 1); saveData(DB);
       } else {
         items[n].done = !items[n].done; saveData(DB);
@@ -370,8 +449,8 @@ bot.on('message', async (msg) => {
   }
 
   // Free text add (fallback)
-  if (!(await canUserAdd(msg))) { await bot.sendMessage(cid, `🚫 You are not allowed to add tasks in this chat.`); await sendListInteractive(cid); return; }
-  const t = text; if (!t) return;
+  if (!(await canUserAdd(msg))) { await bot.sendMessage(cid, `🚫 You are not allowed to add tasks in this chat.`); return; }
+  const t = msg.text.trim(); if (!t) return;
   getList(cid).push({ text:t, done:false }); saveData(DB);
   await sendListInteractive(cid);
 });
@@ -402,18 +481,18 @@ function scheduleDailyAtSgt(hour, minute, fn) {
   }, d);
 }
 
-// Targets helper
 function getTargets() {
   const targets = new Set(ActiveChats);
   if (ANNOUNCE_CHAT) targets.add(String(ANNOUNCE_CHAT));
   return targets;
 }
 
-// Daily messages (IMPORTANT: always re-attach the keyboard after non-interactive messages)
 async function sendDailyHandover() {
   for (const cid of getTargets()) {
     try {
-      await sendWithMenu(cid, '🔔 10:00 SGT — Handover time.');
+      await bot.sendMessage(cid, '🔔 10:00 SGT — Handover time.');
+      await sendListInteractive(cid);
+      await upsertRestoreMenuMessage(cid);
     } catch (e) { console.error('handover send error for', cid, e?.response?.body || e); }
   }
 }
@@ -421,7 +500,9 @@ async function sendDailyHandover() {
 async function sendDailyEOD() {
   for (const cid of getTargets()) {
     try {
-      await sendWithMenu(cid, '🔔 17:00 SGT — End of day.');
+      await bot.sendMessage(cid, '🔔 17:00 SGT — End of day.');
+      await sendListInteractive(cid);
+      await upsertRestoreMenuMessage(cid);
     } catch (e) { console.error('EOD send error for', cid, e?.response?.body || e); }
   }
 }
@@ -429,15 +510,16 @@ async function sendDailyEOD() {
 async function sendDailyMorningPoll() {
   for (const cid of getTargets()) {
     try {
-      // Poll messages commonly cause Telegram mobile to hide reply keyboards.
-      // Fix: always re-send the interactive list (keyboard) right after the poll.
       await bot.sendPoll(
         cid,
         'Good morning commanders, please indicate whether you will be in camp for today',
         ['Yes', 'No', 'MA/MC', 'OL', 'LL', 'OFF'],
         { is_anonymous: false, allows_multiple_answers: false }
       );
-      await sendListInteractive(cid);
+
+      // After poll, iOS sometimes hides reply keyboard; keep restore helper available
+      await upsertRestoreMenuMessage(cid);
+
     } catch (e) { console.error('poll send error for', cid, e?.response?.body || e); }
   }
 }
@@ -445,24 +527,32 @@ async function sendDailyMorningPoll() {
 // ===== Reminders / Awake / Sleep =====
 async function broadcastAwake() {
   for (const cid of getTargets()) {
-    try { await sendWithMenu(cid, '👋 The bot is awake.'); }
-    catch (e) { console.warn('awake send failed for', cid, e?.response?.body || e); }
+    try {
+      await bot.sendMessage(cid, '👋 The bot is awake.');
+      await sendListInteractive(cid);
+      await upsertRestoreMenuMessage(cid);
+    } catch (e) {
+      console.warn('awake send failed for', cid, e?.response?.body || e);
+    }
   }
 }
 
 async function sendReminder(prefix) {
   for (const cid of getTargets()) {
-    try { await sendWithMenu(cid, prefix); }
-    catch (e) { console.error('reminder error for', cid, e?.response?.body || e); }
+    try {
+      await bot.sendMessage(cid, prefix);
+      await sendListInteractive(cid);
+      await upsertRestoreMenuMessage(cid);
+    } catch (e) {
+      console.error('reminder error for', cid, e?.response?.body || e);
+    }
   }
 }
 
 async function sendSleepWarning() {
   for (const cid of getTargets()) {
-    try {
-      // warning can be plain, but re-attach menu anyway for mobile users
-      await sendWithMenu(cid, '😴 The bot is going to sleep soon.');
-    } catch {}
+    try { await bot.sendMessage(cid, '😴 The bot is going to sleep soon.'); }
+    catch {}
   }
 }
 
@@ -484,8 +574,10 @@ async function sendSleepWarning() {
 
     await bot.startPolling({
       interval: 300,
-      // Keep it message-only (your design uses reply keyboard, not callback_query)
-      params: { timeout: 50, allowed_updates: ['message'] },
+      params: {
+        timeout: 50,
+        allowed_updates: ['message', 'callback_query'], // IMPORTANT
+      },
     });
     console.log('📡 Polling started.');
 
@@ -494,7 +586,7 @@ async function sendSleepWarning() {
     // Hello
     await broadcastAwake();
 
-    // Timed reminders (relative to start)
+    // Timed reminders (relative to start) — keep your 20/25 min nudges
     setTimeout(() => sendReminder('⏱️ 20 minutes gone.'), 20 * 60 * 1000);
     setTimeout(() => sendReminder('⏱️ 25 minutes gone.'), 25 * 60 * 1000);
 
@@ -507,10 +599,10 @@ async function sendSleepWarning() {
     if (DURATION_MINUTES > 0) {
       const durMs = DURATION_MINUTES * 60 * 1000;
       const warnMs = Math.max(0, durMs - (SLEEP_WARNING_SECONDS * 1000));
-      if (warnMs > 0) setTimeout(() => { if (VERBOSE) console.log('⏰ Sleep warning firing…'); sendSleepWarning(); }, warnMs);
+      if (warnMs > 0) setTimeout(() => { console.log('⏰ Sleep warning firing…'); sendSleepWarning(); }, warnMs);
 
       setTimeout(async () => {
-        if (VERBOSE) console.log(`⏱️ ${DURATION_MINUTES} minutes elapsed — stopping bot.`);
+        console.log(`⏱️ ${DURATION_MINUTES} minutes elapsed — stopping bot.`);
         if (resetAllChatsChecks()) saveData(DB);
         try { await bot.stopPolling(); } catch {}
         clearInterval(HEARTBEAT);
