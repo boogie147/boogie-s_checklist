@@ -84,7 +84,8 @@
     "compact": true
   },
   "meta": {
-    "version": 2
+    "version": 2,
+    "lastDutyPromptMessageId": 1489
   },
   "group": {
     "-1002768068819": {
@@ -103,6 +104,17 @@
       },
       "removeMode": false,
       "compact": false
+    }
+  },
+  "groups": {
+    "-1002768068819": {
+      "items": [],
+      "removeMode": false,
+      "dutyUserId": "6171407541",
+      "dutyUserName": "Hong Kai",
+      "dmLinked": {
+        "6171407541": true
+      }
     }
   }
 }
