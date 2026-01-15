@@ -21,6 +21,7 @@ const BASE_ITEMS = [
   "Clear desk policy (inclusive of clearing of shredding tray)",
   "Ensure tidiness in office",
   "Clear trash",
+  "Off all relevant switch",
 ];
 
 // ===================== Config / env =====================
