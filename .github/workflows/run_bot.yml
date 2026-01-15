@@ -2,28 +2,29 @@ name: Run Telegram Checklist Bot
 
 on:
   schedule:
-    #06:00 SGT Mon–Fri  (SGT = UTC+8 => 22:00 UTC previous day, Mon-Fri)
-    - cron: '0 22 * * 1-5'
-    #09:00 SGT Mon–Fri  (SGT = UTC+8 => 04:00 UTC Mon–Fri)
+    # 06:00 SGT Mon–Fri  (SGT UTC+8 => 22:00 UTC previous day, Sun–Thu)
+    - cron: '0 22 * * 0-4'
+    # 09:00 SGT Mon–Fri  (SGT UTC+8 => 04:00 UTC Mon–Fri)
     - cron: '0 1 * * 1-5'
-    #15:00 SGT Mon–Fri  (SGT = UTC+8 => 08:00 UTC Mon–Fri)
-    - cron: '0 7 * * 1-4'
+    # 15:00 SGT Mon–Fri  (SGT UTC+8 => 08:00 UTC Mon–Fri)
+    - cron: '0 7 * * 1-5'
+
   workflow_dispatch:
     inputs:
       duration_minutes:
-        description: "How long to keep the bot online (minutes) [optional]"
+        description: "How long to keep the bot online (minutes)"
         required: false
-        default: ""
-      announce_chat_id:
-        description: "Chat ID to announce wake/reminders to (optional)"
+        default: "30"
+      send_poll_on_start:
+        description: "Send morning poll when bot starts (true/false)"
         required: false
-        default: ""
+        default: "false"
       verbose:
-        description: "Enable extra logging"
+        description: "Enable extra logging (true/false)"
         required: false
         default: "false"
       skip_commit:
-        description: "Skip committing checklists.json after run"
+        description: "Skip committing checklists.json after run (true/false)"
         required: false
         default: "false"
 
@@ -34,78 +35,76 @@ concurrency:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    # Give a little buffer above each run length
-    timeout-minutes: 60
+    timeout-minutes: 480   # allow up to 8h if you want longer runs
     permissions:
       contents: write
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Setup Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Install dependencies
+      - name: Install deps
         run: npm ci
 
-      - name: Restore existing checklists.json
+      - name: Restore checklists.json from main
         shell: bash
         run: |
           set -euo pipefail
           git fetch origin main
           if git show origin/main:checklists.json >/dev/null 2>&1; then
             git show origin/main:checklists.json > checklists.json
-            echo "Restored checklists.json from main."
+            echo "Restored checklists.json from main"
           else
             echo "{}" > checklists.json
-            echo "Initialized new checklists.json."
+            echo "Initialized new checklists.json"
           fi
 
-      - name: Determine run kind & duration
+      - name: Decide duration by schedule
         id: decide
         shell: bash
         run: |
-          # Default values
-          RUN_KIND="manual"
-          DURATION="420"  # fallback 7h if we don't know
+          # Default (manual)
+          DURATION="${{ github.event.inputs.duration_minutes || '30' }}"
+          SEND_POLL="${{ github.event.inputs.send_poll_on_start || 'false' }}"
 
-          # If triggered by a cron schedule, github.event.schedule contains the cron string
+          # If schedule trigger, choose duration (customize as you like)
           if [[ -n "${{ github.event.schedule }}" ]]; then
             CRON="${{ github.event.schedule }}"
             if [[ "$CRON" == "0 22 * * 0-4" ]]; then
-              RUN_KIND="morning"
-              DURATION="240"     # 4 hours (06:00→10:00 SGT)
+              # 06:00 SGT run (example: 4 hours)
+              DURATION="240"
+              SEND_POLL="true"
             elif [[ "$CRON" == "0 4 * * 1-5" ]]; then
-              RUN_KIND="noon"
-              DURATION="420"     # 7 hours (12:00→19:00 SGT)
+              # 12:00 SGT run (example: 420 minutes = 7 hours)
+              DURATION="420"
+            elif [[ "$CRON" == "0 8 * * 1-5" ]]; then
+              # 16:00 SGT run (example: 90 minutes)
+              DURATION="90"
             fi
           fi
 
-          # Manual override from dispatch input if provided
-          if [[ -n "${{ github.event.inputs.duration_minutes }}" ]]; then
-            DURATION="${{ github.event.inputs.duration_minutes }}"
-          fi
-
-          echo "run_kind=$RUN_KIND" >> $GITHUB_OUTPUT
           echo "duration=$DURATION" >> $GITHUB_OUTPUT
+          echo "send_poll=$SEND_POLL" >> $GITHUB_OUTPUT
 
-      - name: Run bot (interactive for duration)
+      - name: Run bot
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          DROP_PENDING: 'true'
-          CHAT_ID: ${{ github.event.inputs.announce_chat_id || secrets.CHAT_ID }}
-          DURATION_MINUTES: ${{ steps.decide.outputs.duration }}
-          RUN_KIND: ${{ steps.decide.outputs.run_kind }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          DROP_PENDING: "true"
           VERBOSE: ${{ github.event.inputs.verbose || 'false' }}
+          DURATION_MINUTES: ${{ steps.decide.outputs.duration }}
+          SLEEP_WARNING_SECONDS: "60"
+          SEND_POLL_ON_START: ${{ steps.decide.outputs.send_poll }}
         run: node checklist.js
 
-      - name: Commit and push updated checklist
+      - name: Commit & push updated checklists.json
         if: ${{ github.event.inputs.skip_commit != 'true' }}
         shell: bash
         run: |
