@@ -1,12 +1,15 @@
 // checklist.js
 // DM-only checklist + group announcements (poll + "Start Duty" button)
-// ✅ FIX: Morning poll ONLY runs when RUN_KIND === "morning" (no more poll spam on other runs)
-// ✅ DM checklist supports ticking items via the REPLY-KEYBOARD menu (one button per item)
+// ✅ Morning poll ONLY runs when RUN_KIND === "morning"
+// ✅ DM checklist supports ticking items via reply-keyboard menu (one button per item)
 // ✅ DM UI: Refresh, Add, Clear checks, Compact/Full view, Remove mode (removes EXTRA items only)
-// ✅ /menu command restores the reply keyboard (says restoring + restored)
-// ✅ Inline "Restore menu" fallback button in DM (in case Telegram hides the reply keyboard)
+// ✅ /menu restores the reply keyboard (restoring + restored)
+// ✅ Inline "Restore menu" fallback button in DM
 // ✅ Group: bot posts "Start Duty" inline button whenever it comes online
 // ✅ Before sleeping, bot reports checklist completion status to the GROUP
+// ✅ Reminders at 30/45/50 minutes after start (group + DM duty user)
+// ✅ NEW: /help command (DM + group)
+// ✅ NEW: In DM, adding extra tasks is DENIED unless user is allowlisted (or admin in group) when ADD_REQUIRE_ALLOWLIST=true
 
 const TelegramBot = require("node-telegram-bot-api");
 const fs = require("fs");
@@ -37,14 +40,13 @@ const VERBOSE = String(process.env.VERBOSE || "false") === "true";
 const GROUP_CHAT_ID = ((process.env.CHAT_ID || "").trim()) || null;
 
 // Useful if your CI runs multiple times/day
-// Set in your workflow: morning/noon/afternoon (or whatever you use)
-const RUN_KIND = String(process.env.RUN_KIND || "manual");
+const RUN_KIND = String(process.env.RUN_KIND || "manual"); // morning/noon/afternoon/manual
 
 // How long to keep bot online before auto-stop
 const DURATION_MINUTES = Number(process.env.DURATION_MINUTES || 30); // 0 = no auto-stop
 const SLEEP_WARNING_SECONDS = Number(process.env.SLEEP_WARNING_SECONDS || 60);
 
-// Allowlist
+// Allowlist enforcement
 const ADD_REQUIRE_ALLOWLIST = String(process.env.ADD_REQUIRE_ALLOWLIST || "true") === "true";
 
 // Poll behavior
@@ -189,7 +191,67 @@ async function isAdmin(chatId, userId) {
   }
 }
 
-// ===================== DM Checklist Rendering =====================
+// Determine if a user is allowed to add/remove EXTRA tasks in DM.
+// Policy:
+// - If allowlist enforcement is OFF => allowed
+// - If GROUP_CHAT_ID is not set => deny (cannot validate allowlist)
+// - If user is admin in group => allowed
+// - If user is in /allow list => allowed
+async function canUserModifyExtras(uid) {
+  if (!ADD_REQUIRE_ALLOWLIST) return true;
+  if (!GROUP_CHAT_ID) return false;
+
+  if (await isAdmin(GROUP_CHAT_ID, uid)) return true;
+  const allow = getAllowlist(GROUP_CHAT_ID);
+  return allow.includes(uid);
+}
+
+// ===================== Help text =====================
+function helpText(isDm) {
+  const scope = isDm ? "DM checklist" : "Group chat";
+  const allowNote = ADD_REQUIRE_ALLOWLIST
+    ? "Adding/removing EXTRA tasks is restricted: only /allow-listed users (or group admins) may add/remove."
+    : "Allowlist enforcement is OFF: anyone can add/remove EXTRA tasks in DM.";
+
+  return [
+    `<b>Checklist Bot — Help</b>`,
+    ``,
+    `<b>Scope</b>: ${scope}`,
+    ``,
+    `<b>Core flow</b>`,
+    `• Group: Bot posts <i>Start Duty</i> button whenever it comes online.`,
+    `• Tap <i>Start Duty</i> → Bot DMs you the checklist.`,
+    `• Group receives status reminders and a sleep summary.`,
+    ``,
+    `<b>DM checklist controls</b>`,
+    `• Tap item buttons (#1, #2, …) to toggle ✅/⬜️`,
+    `• ➕ Add — add EXTRA task (subject to allowlist)`,
+    `• 🧹 Clear checks — uncheck everything`,
+    `• 🗑 Remove mode — remove EXTRA tasks only`,
+    `• 📋 Compact view / 📝 Full view — switch display`,
+    `• 🔄 Refresh — redraw checklist`,
+    ``,
+    `<b>Commands</b>`,
+    `• /start — start DM session + show checklist`,
+    `• /help — show this help`,
+    `• /menu — restore menu keyboard (use if Telegram hides it)`,
+    `• /clear — clear all checks`,
+    ``,
+    `<b>Group admin commands</b>`,
+    `• /allow — (reply to a user) allow them to add/remove EXTRA tasks in DM`,
+    `• /deny — (reply to a user) revoke allowance`,
+    `• /whoallowed — list allowlisted users`,
+    ``,
+    `<b>Automation</b>`,
+    `• Morning poll: only sends when RUN_KIND="morning" (and SEND_MORNING_POLL=true).`,
+    `• Run reminders: 30/45/50 min — posts checklist status to group and DM duty user.`,
+    ``,
+    `<b>Allowlist policy</b>`,
+    `• ${allowNote}`,
+  ].join("\n");
+}
+
+// ===================== Checklist stats/render =====================
 function checklistStats(uid) {
   const st = getUserState(uid);
   const total = BASE_ITEMS.length + st.extra.length;
@@ -245,7 +307,7 @@ function itemButtonLabel(uid, idx1) {
   return `#${idx1}`;
 }
 
-// Reply keyboard now includes item buttons so users can tap to toggle
+// Reply keyboard includes item buttons so users can tap to toggle
 function buildDmReplyKeyboard(uid) {
   const st = getUserState(uid);
   const total = BASE_ITEMS.length + st.extra.length;
@@ -259,7 +321,6 @@ function buildDmReplyKeyboard(uid) {
     [{ text: st.compact ? "📝 Full view" : "📋 Compact view" }],
   ];
 
-  // One row per item (tappable)
   for (let i = 1; i <= total; i++) {
     rows.push([{ text: itemButtonLabel(uid, i) }]);
   }
@@ -295,6 +356,11 @@ function resetChecksForUser(uid) {
   saveData(DB);
 }
 
+function formatStatusLine(uid) {
+  const { total, doneCount, complete } = checklistStats(uid);
+  return complete ? `✅ COMPLETE (${doneCount}/${total})` : `⏳ ${doneCount}/${total} done`;
+}
+
 // ===================== Group Messages (Start Duty + Poll + Status) =====================
 async function sendStartDutyPromptToGroup() {
   if (!GROUP_CHAT_ID) return;
@@ -303,10 +369,7 @@ async function sendStartDutyPromptToGroup() {
   let line = "Tap the button to start duty (DM checklist).";
   if (active && String(active.groupChatId) === String(GROUP_CHAT_ID)) {
     const name = await safeGetChatMemberName(GROUP_CHAT_ID, active.userId);
-    const { total, doneCount, complete } = checklistStats(active.userId);
-    line = `Current duty: ${escapeHtml(name)} — ${
-      complete ? "✅ COMPLETE" : `⏳ ${doneCount}/${total} done`
-    }`;
+    line = `Current duty: ${escapeHtml(name)} — ${formatStatusLine(active.userId)}`;
   }
 
   await bot.sendMessage(GROUP_CHAT_ID, `🧾 <b>Duty Checklist</b>\n${line}`, {
@@ -347,19 +410,75 @@ async function announceSleepSummaryToGroup() {
   }
 
   const name = await safeGetChatMemberName(GROUP_CHAT_ID, active.userId);
-  const { total, doneCount, complete } = checklistStats(active.userId);
-
   await bot.sendMessage(
     GROUP_CHAT_ID,
-    `😴 Bot is going to sleep.\nDuty user: ${name} — ${
-      complete ? "✅ checklist COMPLETE" : `⏳ ${doneCount}/${total} done`
-    }.`
+    `😴 Bot is going to sleep.\nDuty user: ${name} — ${formatStatusLine(active.userId)}.`
   );
+}
+
+// ===================== Reminders at 30/45/50 minutes =====================
+async function sendRunReminder(minMark) {
+  const active = getActiveDuty();
+  if (!active || !active.userId) {
+    if (GROUP_CHAT_ID) {
+      try {
+        await bot.sendMessage(GROUP_CHAT_ID, `⏱️ ${minMark} min — Reminder: no duty user is active.`);
+      } catch {}
+    }
+    return;
+  }
+
+  const dutyUid = active.userId;
+
+  // Group reminder (minimal status)
+  if (GROUP_CHAT_ID && String(active.groupChatId) === String(GROUP_CHAT_ID)) {
+    try {
+      const name = await safeGetChatMemberName(GROUP_CHAT_ID, dutyUid);
+      await bot.sendMessage(
+        GROUP_CHAT_ID,
+        `⏱️ ${minMark} min — Duty: ${name} — ${formatStatusLine(dutyUid)}`
+      );
+    } catch (e) {
+      console.error("group reminder error:", e?.response?.body || e);
+    }
+  }
+
+  // DM reminder with status + checklist view
+  try {
+    await bot.sendMessage(
+      dutyUid,
+      `⏱️ ${minMark} min reminder — your status: ${formatStatusLine(dutyUid)}`
+    );
+    await sendDmChecklist(dutyUid);
+  } catch (e) {
+    if (VERBOSE) console.warn("dm reminder failed:", e?.response?.body || e);
+  }
+}
+
+function scheduleRunReminders() {
+  const marks = [30, 45, 50];
+  for (const m of marks) {
+    if (DURATION_MINUTES > 0 && m >= DURATION_MINUTES) continue;
+    setTimeout(() => {
+      sendRunReminder(m).catch((e) =>
+        console.error("sendRunReminder error:", e?.response?.body || e)
+      );
+    }, m * 60 * 1000);
+
+    if (VERBOSE) console.log(`Reminder scheduled at +${m}min`);
+  }
 }
 
 // ===================== Commands =====================
 const cmdRe = (name, hasArg = false) =>
   new RegExp(`^\\/${name}(?:@\\w+)?${hasArg ? "\\s+(.+)" : "\\s*$"}`, "i");
+
+// /help (DM + group)
+bot.onText(cmdRe("help"), async (msg) => {
+  const isDm = msg.chat.type === "private";
+  const cid = msg.chat.id;
+  await bot.sendMessage(cid, helpText(isDm), { parse_mode: "HTML" });
+});
 
 // /start
 bot.onText(cmdRe("start"), async (msg) => {
@@ -370,17 +489,17 @@ bot.onText(cmdRe("start"), async (msg) => {
   if (!isPrivate) {
     await bot.sendMessage(
       msg.chat.id,
-      "This bot runs checklist in DM only. Use the Start Duty button in the group message."
+      "This bot runs checklist in DM only. Use the Start Duty button in the group message.\nSend /help for features."
     );
     return;
   }
 
   await bot.sendMessage(uid, "Welcome. Restoring your menu…");
   await sendDmChecklist(uid);
-  await bot.sendMessage(uid, "Menu restored.");
+  await bot.sendMessage(uid, "Menu restored.\nSend /help to see all features.");
 });
 
-// /menu (DM only) - restore reply keyboard explicitly
+// /menu (DM only)
 bot.onText(cmdRe("menu"), async (msg) => {
   if (msg.chat.type !== "private") return;
   const uid = msg.from?.id;
@@ -481,9 +600,7 @@ bot.on("callback_query", async (q) => {
   const fromId = q.from?.id;
   const msg = q.message;
 
-  try {
-    await bot.answerCallbackQuery(q.id);
-  } catch {}
+  try { await bot.answerCallbackQuery(q.id); } catch {}
 
   if (!fromId) return;
 
@@ -504,18 +621,15 @@ bot.on("callback_query", async (q) => {
 
     setActiveDuty(fromId, groupId);
 
-    // Announce in group
     try {
       const name = await safeGetChatMemberName(groupId, fromId);
       await bot.sendMessage(groupId, `✅ Duty started: ${name}. Checklist will be in DM.`);
     } catch {}
 
-    // DM user
     try {
       await bot.sendMessage(fromId, "You are now on duty. Here is your checklist:");
       await sendDmChecklist(fromId);
     } catch (e) {
-      // If user never /start the bot in DM, Telegram blocks DM
       try {
         await bot.sendMessage(
           groupId,
@@ -533,7 +647,7 @@ bot.on("message", async (msg) => {
   if (!msg.text) return;
 
   // ignore commands handled elsewhere
-  if (/^\/(start|menu|clear|allow|deny|whoallowed)\b/i.test(msg.text)) return;
+  if (/^\/(start|help|menu|clear|allow|deny|whoallowed)\b/i.test(msg.text)) return;
 
   // DM-only checklist interaction
   if (msg.chat.type !== "private") return;
@@ -570,6 +684,11 @@ bot.on("message", async (msg) => {
   }
 
   if (msg.text === "🗑 Remove mode") {
+    // Remove mode affects EXTRA tasks only; still restrict entry to those who can modify extras
+    if (!(await canUserModifyExtras(uid))) {
+      await bot.sendMessage(uid, "🚫 You are not allowed to remove tasks. Ask an admin to /allow you in the group.");
+      return;
+    }
     st.removeMode = true;
     saveData(DB);
     await bot.sendMessage(uid, "Remove mode ON. Tap an EXTRA item button to delete it, or press “✅ Done removing”.");
@@ -585,12 +704,20 @@ bot.on("message", async (msg) => {
   }
 
   if (msg.text === "➕ Add") {
+    if (!(await canUserModifyExtras(uid))) {
+      await bot.sendMessage(uid, "🚫 You are not allowed to add tasks. Ask an admin to /allow you in the group.");
+      return;
+    }
     await bot.sendMessage(uid, "Send the extra task text:", { reply_markup: { force_reply: true } });
     return;
   }
 
   // Force-reply add
   if (msg.reply_to_message && /Send the extra task text:/i.test(msg.reply_to_message.text || "")) {
+    if (!(await canUserModifyExtras(uid))) {
+      await bot.sendMessage(uid, "🚫 You are not allowed to add tasks. Ask an admin to /allow you in the group.");
+      return;
+    }
     const t = msg.text.trim();
     if (!t) return;
     st.extra.push({ text: t, done: false });
@@ -599,7 +726,7 @@ bot.on("message", async (msg) => {
     return;
   }
 
-  // Item button press: parse "#N" anywhere in the text (matches your button labels)
+  // Item button press: parse "#N"
   const mm = msg.text.match(/#(\d+)/);
   if (mm) {
     const n = parseInt(mm[1], 10);
@@ -607,30 +734,42 @@ bot.on("message", async (msg) => {
     const baseLen = BASE_ITEMS.length;
     const extraLen = st.extra.length;
 
+    // Base items: anyone can toggle
     if (idx0 >= 0 && idx0 < baseLen) {
-      // toggle base item (even if remove mode is on, we do NOT delete base)
       st.baseDone[idx0] = !st.baseDone[idx0];
       saveData(DB);
       await sendDmChecklist(uid);
       return;
     }
 
+    // Extra items: toggling is allowed, removing requires permission if removeMode is on
     if (idx0 >= baseLen && idx0 < baseLen + extraLen) {
       const extraIndex = idx0 - baseLen;
+
       if (st.removeMode) {
+        if (!(await canUserModifyExtras(uid))) {
+          await bot.sendMessage(uid, "🚫 You are not allowed to remove tasks. Ask an admin to /allow you in the group.");
+          return;
+        }
         st.extra.splice(extraIndex, 1);
       } else {
+        // toggling done is ok even if not allowlisted
         st.extra[extraIndex].done = !st.extra[extraIndex].done;
       }
+
       saveData(DB);
       await sendDmChecklist(uid);
       return;
     }
   }
 
-  // Free text fallback: treat as "add extra task"
+  // Free text fallback: treat as "add extra task" BUT enforce allowlist
   const t = msg.text.trim();
   if (t) {
+    if (!(await canUserModifyExtras(uid))) {
+      await bot.sendMessage(uid, "🚫 You are not allowed to add tasks. Ask an admin to /allow you in the group.");
+      return;
+    }
     st.extra.push({ text: t, done: false });
     saveData(DB);
     await sendDmChecklist(uid);
@@ -650,9 +789,7 @@ async function gracefulShutdown(reason) {
     if (VERBOSE) console.log("Shutdown:", reason);
     await announceSleepSummaryToGroup();
   } catch {}
-  try {
-    clearInterval(HEARTBEAT);
-  } catch {}
+  try { clearInterval(HEARTBEAT); } catch {}
   process.exit(0);
 }
 
@@ -662,7 +799,7 @@ async function gracefulShutdown(reason) {
     console.log(`🤖 Bot @${me.username} (ID ${me.id}) starting…`);
 
     if (!GROUP_CHAT_ID) {
-      console.warn("⚠️ CHAT_ID (GROUP_CHAT_ID) is not set. Group announcements will not be sent.");
+      console.warn("⚠️ CHAT_ID is not set. Group announcements will not be sent.");
     }
 
     try {
@@ -678,19 +815,19 @@ async function gracefulShutdown(reason) {
     });
     console.log("📡 Polling started.");
 
-    // When bot comes online:
-    // 1) announce awake
-    // 2) send duty start prompt (inline button)
-    // 3) send poll ONLY on morning run
+    // When bot comes online
     if (GROUP_CHAT_ID) {
       await announceAwakeToGroup();
       await sendStartDutyPromptToGroup();
 
-      // ✅ FIX: poll ONLY on morning run
+      // Poll ONLY on morning run
       if (SEND_MORNING_POLL && RUN_KIND === "morning") {
         await sendMorningPollToGroup();
       }
     }
+
+    // Schedule run reminders at 30/45/50 minutes
+    scheduleRunReminders();
 
     // Auto-stop
     if (DURATION_MINUTES > 0) {
