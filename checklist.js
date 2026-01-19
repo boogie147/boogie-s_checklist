@@ -7,6 +7,7 @@
 // - /menu command restores the reply keyboard (and tells user it is restoring)
 // - Inline "Restore menu" fallback button in DM in case Telegram hides the reply keyboard
 // - Before sleeping, bot reports checklist completion status to the GROUP
+// - NEW: Checklist items are tappable via the reply-keyboard (one button per item)
 
 const TelegramBot = require("node-telegram-bot-api");
 const fs = require("fs");
@@ -224,17 +225,34 @@ function formatChecklist(uid) {
   return `<b>Your checklist</b>\n${all.join("\n")}`;
 }
 
+// Button label for each item in the reply keyboard (tap-to-toggle)
+function itemButtonLabel(done, number, text) {
+  return `${done ? "✅" : "⬜️"} #${number}: ${truncate(String(text), 28)}`;
+}
+
 function buildDmReplyKeyboard(uid) {
   const st = getUserState(uid);
 
-  // Reply keyboard (Telegram might hide it sometimes; we also send an inline restore button separately)
+  const rows = [
+    [{ text: "➕ Add" }, { text: "🔄 Refresh" }],
+    [{ text: st.removeMode ? "✅ Done removing" : "🗑 Remove mode" }, { text: "🧹 Clear checks" }],
+    [{ text: st.compact ? "📝 Full view" : "📋 Compact view" }],
+  ];
+
+  // NEW: item buttons (base + extra), one per row to keep mobile-friendly
+  // Base
+  for (let i = 0; i < BASE_ITEMS.length; i++) {
+    rows.push([{ text: itemButtonLabel(!!st.baseDone[i], i + 1, BASE_ITEMS[i]) }]);
+  }
+  // Extra
+  for (let j = 0; j < st.extra.length; j++) {
+    const n = BASE_ITEMS.length + j + 1;
+    rows.push([{ text: itemButtonLabel(!!st.extra[j].done, n, st.extra[j].text) }]);
+  }
+
   return {
     reply_markup: {
-      keyboard: [
-        [{ text: "➕ Add" }, { text: "🔄 Refresh" }],
-        [{ text: st.removeMode ? "✅ Done removing" : "🗑 Remove mode" }, { text: "🧹 Clear checks" }],
-        [{ text: st.compact ? "📝 Full view" : "📋 Compact view" }],
-      ],
+      keyboard: rows,
       resize_keyboard: true,
       one_time_keyboard: false,
       input_field_placeholder: "Tap a button or type a task…",
@@ -285,9 +303,7 @@ async function sendStartDutyPromptToGroup() {
   await bot.sendMessage(GROUP_CHAT_ID, `🧾 <b>Duty Checklist</b>\n${line}`, {
     parse_mode: "HTML",
     reply_markup: {
-      inline_keyboard: [
-        [{ text: "✅ Start Duty (DM)", callback_data: "start_duty" }],
-      ],
+      inline_keyboard: [[{ text: "✅ Start Duty (DM)", callback_data: "start_duty" }]],
     },
   });
 }
@@ -336,15 +352,12 @@ const cmdRe = (name, hasArg = false) =>
 
 // /start
 bot.onText(cmdRe("start"), async (msg) => {
-  const cid = msg.chat.id;
   const isPrivate = msg.chat.type === "private";
   const uid = msg.from?.id;
-
   if (!uid) return;
 
   if (!isPrivate) {
-    // Group: do not spam checklist; just show duty prompt
-    await bot.sendMessage(cid, "This bot runs checklist in DM only. Use the button in the group message to start duty.");
+    await bot.sendMessage(msg.chat.id, "This bot runs checklist in DM only. Use the button in the group message to start duty.");
     return;
   }
 
@@ -392,7 +405,11 @@ bot.onText(cmdRe("allow"), async (msg) => {
     allow.push(target.id);
     saveData(DB);
   }
-  await bot.sendMessage(cid, `✅ Allowed: ${escapeHtml(target.first_name || target.username || String(target.id))} (${target.id})`, { parse_mode: "HTML" });
+  await bot.sendMessage(
+    cid,
+    `✅ Allowed: ${escapeHtml(target.first_name || target.username || String(target.id))} (${target.id})`,
+    { parse_mode: "HTML" }
+  );
 });
 
 bot.onText(cmdRe("deny"), async (msg) => {
@@ -415,7 +432,11 @@ bot.onText(cmdRe("deny"), async (msg) => {
   if (idx >= 0) {
     allow.splice(idx, 1);
     saveData(DB);
-    await bot.sendMessage(cid, `🚫 Removed from allowlist: ${escapeHtml(target.first_name || target.username || String(target.id))} (${target.id})`, { parse_mode: "HTML" });
+    await bot.sendMessage(
+      cid,
+      `🚫 Removed from allowlist: ${escapeHtml(target.first_name || target.username || String(target.id))} (${target.id})`,
+      { parse_mode: "HTML" }
+    );
   } else {
     await bot.sendMessage(cid, `User (${target.id}) was not on the allowlist.`);
   }
@@ -443,15 +464,11 @@ bot.on("callback_query", async (q) => {
   const fromId = q.from?.id;
   const msg = q.message;
 
-  try {
-    // Always answer to stop the "loading" spinner
-    await bot.answerCallbackQuery(q.id);
-  } catch {}
+  try { await bot.answerCallbackQuery(q.id); } catch {}
 
   if (!fromId) return;
 
   if (data === "restore_menu") {
-    // DM only
     try {
       await bot.sendMessage(fromId, "Restoring menu…");
       await sendDmChecklist(fromId);
@@ -463,26 +480,20 @@ bot.on("callback_query", async (q) => {
   }
 
   if (data === "start_duty") {
-    // Only allow from the configured group chat message, if available
     const groupId = GROUP_CHAT_ID ? String(GROUP_CHAT_ID) : (msg ? String(msg.chat.id) : null);
     if (!groupId) return;
 
-    // Set active duty
     setActiveDuty(fromId, groupId);
 
-    // Announce in group (minimal)
     try {
       const name = await safeGetChatMemberName(groupId, fromId);
       await bot.sendMessage(groupId, `✅ Duty started: ${name}. Checklist will be in DM.`);
     } catch {}
 
-    // DM the user with checklist
     try {
       await bot.sendMessage(fromId, "You are now on duty. Here is your checklist:");
       await sendDmChecklist(fromId);
     } catch (e) {
-      // Common: user never started bot in DM before -> Telegram blocks DM
-      // In that case, tell them in group to /start the bot once in DM.
       try {
         await bot.sendMessage(groupId, "⚠️ I could not DM you. Please open the bot and send /start once, then tap Start Duty again.");
       } catch {}
@@ -493,7 +504,7 @@ bot.on("callback_query", async (q) => {
   }
 });
 
-// ===================== DM message handler (reply keyboard) =====================
+// ===================== DM message handler (reply keyboard + tap-to-toggle) =====================
 bot.on("message", async (msg) => {
   if (!msg.text) return;
 
@@ -537,7 +548,7 @@ bot.on("message", async (msg) => {
   if (msg.text === "🗑 Remove mode") {
     st.removeMode = true;
     saveData(DB);
-    await bot.sendMessage(uid, "Remove mode ON. Tap an EXTRA item number to delete it, or press “✅ Done removing”.");
+    await bot.sendMessage(uid, "Remove mode ON. Tap an EXTRA item button to delete it, or press “✅ Done removing”.");
     return;
   }
 
@@ -564,11 +575,9 @@ bot.on("message", async (msg) => {
     return;
   }
 
-  // Numeric tap handling:
-  // - base items are immutable; toggling is allowed
-  // - remove mode ONLY deletes EXTRA items (to keep hard-coded base persistent)
-  // Accept formats like: "3", "#3", "3.", "3) ..."
-  const m = msg.text.match(/^\s*#?(\d+)\b/);
+  // Tap-to-toggle (from menu): parse "#N"
+  // Works for both direct number messages and menu button labels like "✅ #3: ..."
+  const m = msg.text.match(/#(\d+)/);
   if (m) {
     const n = parseInt(m[1], 10);
     const idx0 = n - 1;
@@ -576,7 +585,7 @@ bot.on("message", async (msg) => {
     const extraLen = st.extra.length;
 
     if (idx0 >= 0 && idx0 < baseLen) {
-      // toggle base item
+      // toggle base item (never removed)
       st.baseDone[idx0] = !st.baseDone[idx0];
       saveData(DB);
       await sendDmChecklist(uid);
@@ -597,7 +606,6 @@ bot.on("message", async (msg) => {
   }
 
   // Free text fallback: treat as "add extra task"
-  // (If you do NOT want this behavior, comment this block out.)
   const t = msg.text.trim();
   if (t) {
     st.extra.push({ text: t, done: false });
@@ -637,23 +645,18 @@ const HEARTBEAT = setInterval(() => {
   if (VERBOSE) console.log("…heartbeat");
 }, 10_000);
 
-let SELF_ID = 0;
-
 async function gracefulShutdown(reason) {
   try {
     if (VERBOSE) console.log("Shutdown:", reason);
     await announceSleepSummaryToGroup();
   } catch {}
-  try {
-    clearInterval(HEARTBEAT);
-  } catch {}
+  try { clearInterval(HEARTBEAT); } catch {}
   process.exit(0);
 }
 
 (async function main() {
   try {
     const me = await bot.getMe();
-    SELF_ID = me.id;
     console.log(`🤖 Bot @${me.username} (ID ${me.id}) starting…`);
 
     if (!GROUP_CHAT_ID) {
@@ -675,22 +678,16 @@ async function gracefulShutdown(reason) {
 
     // When bot comes online:
     // 1) announce awake (group)
-    // 2) send duty start prompt with inline button (group)  <-- YOU REQUESTED THIS EVERY TIME
+    // 2) send duty start prompt with inline button (group)
     // 3) optionally send poll (typically only morning run, but you can decide)
     if (GROUP_CHAT_ID) {
       await announceAwakeToGroup();
       await sendStartDutyPromptToGroup();
 
-      // Poll logic: send on morning run, or always if you prefer
       if (SEND_MORNING_POLL && (RUN_KIND === "morning" || RUN_KIND === "manual")) {
-        // If you want poll ONLY at 06:00 runs, set RUN_KIND=morning in your workflow and remove "manual" above.
         await sendMorningPollToGroup();
       }
     }
-
-    // If you keep long sessions (e.g., 4h/7h), these can fire during the same run:
-    // scheduleDailyAtSgt(10, 0, async () => bot.sendMessage(GROUP_CHAT_ID, "🔔 10:00 SGT — Handover time."));
-    // scheduleDailyAtSgt(17, 0, async () => bot.sendMessage(GROUP_CHAT_ID, "🔔 17:00 SGT — End of day."));
 
     // Auto-stop
     if (DURATION_MINUTES > 0) {
@@ -713,6 +710,5 @@ async function gracefulShutdown(reason) {
   }
 })();
 
-// Persist & shutdown handlers
 process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 process.on("SIGINT", () => gracefulShutdown("SIGINT"));
