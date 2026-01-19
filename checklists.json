@@ -119,9 +119,9 @@
   },
   "duty": {
     "active": {
-      "userId": 6171407541,
+      "userId": 7627172388,
       "groupChatId": "-1002768068819",
-      "sinceIso": "2026-01-19T07:44:00.099Z"
+      "sinceIso": "2026-01-19T08:15:42.717Z"
     }
   },
   "users": {
@@ -154,7 +154,29 @@
         false
       ],
       "extra": []
+    },
+    "7627172388": {
+      "compact": false,
+      "removeMode": false,
+      "baseDone": [
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false
+      ],
+      "extra": [
+        {
+          "text": "Hello",
+          "done": false
+        }
+      ]
     }
   },
-  "allow": {}
+  "allow": {
+    "-1002768068819": []
+  }
 }
