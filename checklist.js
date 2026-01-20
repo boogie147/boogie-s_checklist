@@ -1,6 +1,9 @@
 // checklist.js
 // DM-only checklist + group announcements (poll + "Start Duty" button)
-// ✅ Morning poll ONLY runs when RUN_KIND === "morning"
+// ✅ Morning poll sends if:
+//    - SEND_MORNING_POLL=true AND
+//    - (RUN_KIND==="morning" OR bot starts within MORNING_POLL_WINDOW_MINUTES after 06:00 SGT) AND
+//    - not already sent today (SGT) (persisted guard)
 // ✅ DM checklist supports ticking items via reply-keyboard menu (one button per item)
 // ✅ DM UI: Refresh, Add, Clear checks, Compact/Full view, Remove mode (removes EXTRA items only)
 // ✅ /menu restores the reply keyboard (restoring + restored)
@@ -8,8 +11,8 @@
 // ✅ Group: bot posts "Start Duty" inline button whenever it comes online
 // ✅ Before sleeping, bot reports checklist completion status to the GROUP
 // ✅ Reminders at 30/45/50 minutes after start (group + DM duty user)
-// ✅ NEW: /help command (DM + group)
-// ✅ NEW: In DM, adding extra tasks is DENIED unless user is allowlisted (or admin in group) when ADD_REQUIRE_ALLOWLIST=true
+// ✅ /help command (DM + group)
+// ✅ In DM, adding extra tasks is DENIED unless user is allowlisted (or admin in group) when ADD_REQUIRE_ALLOWLIST=true
 
 const TelegramBot = require("node-telegram-bot-api");
 const fs = require("fs");
@@ -52,6 +55,11 @@ const ADD_REQUIRE_ALLOWLIST = String(process.env.ADD_REQUIRE_ALLOWLIST || "true"
 // Poll behavior
 const SEND_MORNING_POLL = String(process.env.SEND_MORNING_POLL || "true") === "true";
 
+// NEW: "operating around 0600 SGT" window logic
+const MORNING_POLL_SGT_HOUR = Number(process.env.MORNING_POLL_SGT_HOUR || 6);
+const MORNING_POLL_SGT_MINUTE = Number(process.env.MORNING_POLL_SGT_MINUTE || 0);
+const MORNING_POLL_WINDOW_MINUTES = Number(process.env.MORNING_POLL_WINDOW_MINUTES || 20);
+
 // Safety
 const DROP_PENDING = String(process.env.DROP_PENDING || "true") === "true";
 
@@ -90,7 +98,10 @@ let DB = loadData();
  *       extra: [{ text, done }]
  *     }
  *   },
- *   allow: { [groupChatId]: number[] }
+ *   allow: { [groupChatId]: number[] },
+ *   meta: {
+ *     lastMorningPollDateSgt: "YYYY-MM-DD" | null
+ *   }
  * }
  */
 function ensureRoot() {
@@ -98,6 +109,8 @@ function ensureRoot() {
   if (!DB.duty) DB.duty = { active: null };
   if (!DB.users) DB.users = {};
   if (!DB.allow) DB.allow = {};
+  if (!DB.meta) DB.meta = { lastMorningPollDateSgt: null };
+  if (!("lastMorningPollDateSgt" in DB.meta)) DB.meta.lastMorningPollDateSgt = null;
 }
 ensureRoot();
 
@@ -192,11 +205,6 @@ async function isAdmin(chatId, userId) {
 }
 
 // Determine if a user is allowed to add/remove EXTRA tasks in DM.
-// Policy:
-// - If allowlist enforcement is OFF => allowed
-// - If GROUP_CHAT_ID is not set => deny (cannot validate allowlist)
-// - If user is admin in group => allowed
-// - If user is in /allow list => allowed
 async function canUserModifyExtras(uid) {
   if (!ADD_REQUIRE_ALLOWLIST) return true;
   if (!GROUP_CHAT_ID) return false;
@@ -204,6 +212,56 @@ async function canUserModifyExtras(uid) {
   if (await isAdmin(GROUP_CHAT_ID, uid)) return true;
   const allow = getAllowlist(GROUP_CHAT_ID);
   return allow.includes(uid);
+}
+
+// ===== SGT time helpers (no external libs) =====
+function nowSgtParts() {
+  // SGT is UTC+8; compute by shifting UTC milliseconds
+  const now = new Date();
+  const sgtMs = now.getTime() + 8 * 60 * 60 * 1000;
+  const sgt = new Date(sgtMs);
+
+  const yyyy = sgt.getUTCFullYear();
+  const mm = String(sgt.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(sgt.getUTCDate()).padStart(2, "0");
+  const dateStr = `${yyyy}-${mm}-${dd}`;
+
+  const hour = sgt.getUTCHours();
+  const minute = sgt.getUTCMinutes();
+  const second = sgt.getUTCSeconds();
+
+  return { dateStr, hour, minute, second };
+}
+
+function minutesSinceSgt(h, m, targetH, targetM) {
+  return (h * 60 + m) - (targetH * 60 + targetM);
+}
+
+function shouldSendMorningPollNow() {
+  if (!SEND_MORNING_POLL) return false;
+
+  // If you explicitly label the run, keep honoring it
+  if (RUN_KIND === "morning") return true;
+
+  // Otherwise, fallback to "around 0600 SGT" window
+  const { hour, minute } = nowSgtParts();
+  const deltaMin = minutesSinceSgt(hour, minute, MORNING_POLL_SGT_HOUR, MORNING_POLL_SGT_MINUTE);
+
+  // deltaMin in [0, window] means it is between 06:00 and 06:00+window
+  return deltaMin >= 0 && deltaMin <= MORNING_POLL_WINDOW_MINUTES;
+}
+
+function alreadySentMorningPollToday() {
+  ensureRoot();
+  const { dateStr } = nowSgtParts();
+  return DB.meta.lastMorningPollDateSgt === dateStr;
+}
+
+function markMorningPollSentToday() {
+  ensureRoot();
+  const { dateStr } = nowSgtParts();
+  DB.meta.lastMorningPollDateSgt = dateStr;
+  saveData(DB);
 }
 
 // ===================== Help text =====================
@@ -243,7 +301,7 @@ function helpText(isDm) {
     `• /whoallowed — list allowlisted users`,
     ``,
     `<b>Automation</b>`,
-    `• Morning poll: only sends when RUN_KIND="morning" (and SEND_MORNING_POLL=true).`,
+    `• Morning poll: sends when RUN_KIND="morning" OR within ${MORNING_POLL_WINDOW_MINUTES} minutes after ${String(MORNING_POLL_SGT_HOUR).padStart(2,"0")}:${String(MORNING_POLL_SGT_MINUTE).padStart(2,"0")} SGT (once per SGT day).`,
     `• Run reminders: 30/45/50 min — posts checklist status to group and DM duty user.`,
     ``,
     `<b>Allowlist policy</b>`,
@@ -646,10 +704,7 @@ bot.on("callback_query", async (q) => {
 bot.on("message", async (msg) => {
   if (!msg.text) return;
 
-  // ignore commands handled elsewhere
   if (/^\/(start|help|menu|clear|allow|deny|whoallowed)\b/i.test(msg.text)) return;
-
-  // DM-only checklist interaction
   if (msg.chat.type !== "private") return;
 
   const uid = msg.from?.id;
@@ -657,7 +712,6 @@ bot.on("message", async (msg) => {
 
   const st = getUserState(uid);
 
-  // Global buttons
   if (msg.text === "🔄 Refresh") {
     await sendDmChecklist(uid);
     return;
@@ -684,7 +738,6 @@ bot.on("message", async (msg) => {
   }
 
   if (msg.text === "🗑 Remove mode") {
-    // Remove mode affects EXTRA tasks only; still restrict entry to those who can modify extras
     if (!(await canUserModifyExtras(uid))) {
       await bot.sendMessage(uid, "🚫 You are not allowed to remove tasks. Ask an admin to /allow you in the group.");
       return;
@@ -712,7 +765,6 @@ bot.on("message", async (msg) => {
     return;
   }
 
-  // Force-reply add
   if (msg.reply_to_message && /Send the extra task text:/i.test(msg.reply_to_message.text || "")) {
     if (!(await canUserModifyExtras(uid))) {
       await bot.sendMessage(uid, "🚫 You are not allowed to add tasks. Ask an admin to /allow you in the group.");
@@ -726,7 +778,6 @@ bot.on("message", async (msg) => {
     return;
   }
 
-  // Item button press: parse "#N"
   const mm = msg.text.match(/#(\d+)/);
   if (mm) {
     const n = parseInt(mm[1], 10);
@@ -734,7 +785,6 @@ bot.on("message", async (msg) => {
     const baseLen = BASE_ITEMS.length;
     const extraLen = st.extra.length;
 
-    // Base items: anyone can toggle
     if (idx0 >= 0 && idx0 < baseLen) {
       st.baseDone[idx0] = !st.baseDone[idx0];
       saveData(DB);
@@ -742,7 +792,6 @@ bot.on("message", async (msg) => {
       return;
     }
 
-    // Extra items: toggling is allowed, removing requires permission if removeMode is on
     if (idx0 >= baseLen && idx0 < baseLen + extraLen) {
       const extraIndex = idx0 - baseLen;
 
@@ -753,7 +802,6 @@ bot.on("message", async (msg) => {
         }
         st.extra.splice(extraIndex, 1);
       } else {
-        // toggling done is ok even if not allowlisted
         st.extra[extraIndex].done = !st.extra[extraIndex].done;
       }
 
@@ -763,7 +811,6 @@ bot.on("message", async (msg) => {
     }
   }
 
-  // Free text fallback: treat as "add extra task" BUT enforce allowlist
   const t = msg.text.trim();
   if (t) {
     if (!(await canUserModifyExtras(uid))) {
@@ -815,14 +862,25 @@ async function gracefulShutdown(reason) {
     });
     console.log("📡 Polling started.");
 
-    // When bot comes online
     if (GROUP_CHAT_ID) {
       await announceAwakeToGroup();
       await sendStartDutyPromptToGroup();
 
-      // Poll ONLY on morning run
-      if (SEND_MORNING_POLL && RUN_KIND === "morning") {
+      // NEW robust poll logic:
+      // - send if (RUN_KIND==="morning") OR if within window after 06:00 SGT
+      // - but only once per SGT day (persisted)
+      if (shouldSendMorningPollNow() && !alreadySentMorningPollToday()) {
+        if (VERBOSE) {
+          const p = nowSgtParts();
+          console.log(`Morning poll sending (SGT ${p.hour}:${p.minute})`);
+        }
         await sendMorningPollToGroup();
+        markMorningPollSentToday();
+      } else if (VERBOSE) {
+        const p = nowSgtParts();
+        console.log(
+          `Morning poll NOT sent. shouldSend=${shouldSendMorningPollNow()} alreadySentToday=${alreadySentMorningPollToday()} (SGT ${p.hour}:${p.minute})`
+        );
       }
     }
 
