@@ -85,7 +85,8 @@
   },
   "meta": {
     "version": 2,
-    "lastDutyPromptMessageId": 1489
+    "lastDutyPromptMessageId": 1489,
+    "lastMorningPollDateSgt": null
   },
   "group": {
     "-1002768068819": {
@@ -121,7 +122,7 @@
     "active": {
       "userId": 6149242922,
       "groupChatId": "-1002768068819",
-      "sinceIso": "2026-01-19T22:57:38.498Z"
+      "sinceIso": "2026-01-20T08:04:44.367Z"
     }
   },
   "users": {
@@ -160,7 +161,7 @@
       "removeMode": false,
       "baseDone": [
         true,
-        false,
+        true,
         false,
         false,
         false,
