@@ -270,7 +270,30 @@ async function canUserModifyExtras(uid) {
 
 // ===== SGT time helpers (no external libs) =====
 function nowSgtParts() {
-  // SGT is UTC+8; compute by shifting UTC milliseconds
+  // Optional test override: set TEST_SGT_ISO="2026-01-21T06:15:00+08:00"
+  const testIso = (process.env.TEST_SGT_ISO || "").trim();
+  if (testIso) {
+    const d = new Date(testIso);
+    if (!Number.isNaN(d.getTime())) {
+      // Interpret the provided ISO as an absolute timestamp and then compute SGT parts from it.
+      // We convert it to "SGT as UTC" by adding +8h and reading UTC parts, same as the real clock path.
+      const sgtMs = d.getTime() + 8 * 60 * 60 * 1000;
+      const sgt = new Date(sgtMs);
+
+      const yyyy = sgt.getUTCFullYear();
+      const mm = String(sgt.getUTCMonth() + 1).padStart(2, "0");
+      const dd = String(sgt.getUTCDate()).padStart(2, "0");
+      const dateStr = `${yyyy}-${mm}-${dd}`;
+
+      const hour = sgt.getUTCHours();
+      const minute = sgt.getUTCMinutes();
+      const second = sgt.getUTCSeconds();
+
+      return { dateStr, hour, minute, second };
+    }
+  }
+
+  // Real clock path (SGT = UTC+8)
   const now = new Date();
   const sgtMs = now.getTime() + 8 * 60 * 60 * 1000;
   const sgt = new Date(sgtMs);
