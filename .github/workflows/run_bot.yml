@@ -6,8 +6,8 @@ on:
     - cron: "0 22 * * 0-4"
     # 09:00 SGT Mon–Fri  (SGT UTC+8 => 01:00 UTC Mon–Fri)
     - cron: "0 1 * * 1-5"
-    # 15:00 SGT Mon–Fri  (SGT UTC+8 => 07:00 UTC Mon–Fri)
-    - cron: "0 7 * * 1-5"
+    # 16:10 SGT Mon–Fri  (SGT UTC+8 => 07:00 UTC Mon–Fri)
+    - cron: "10 8 * * 1-5"
 
   workflow_dispatch:
     inputs:
@@ -92,8 +92,8 @@ jobs:
               DURATION="420"
               SEND_POLL="false"
               RUN_KIND="noon"
-            elif [[ "$CRON" == "0 7 * * 1-5" ]]; then
-              # 15:00 SGT run
+            elif [[ "$CRON" == "10 8 * * 1-5" ]]; then
+              # 16:10 SGT run
               DURATION="90"
               SEND_POLL="false"
               RUN_KIND="afternoon"
