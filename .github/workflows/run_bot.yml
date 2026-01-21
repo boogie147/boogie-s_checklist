@@ -3,11 +3,11 @@ name: Run Telegram Checklist Bot
 on:
   schedule:
     # 06:00 SGT Mon–Fri  (SGT UTC+8 => 22:00 UTC previous day, Sun–Thu)
-    - cron: '0 22 * * 0-4'
-    # 09:00 SGT Mon–Fri  (SGT UTC+8 => 04:00 UTC Mon–Fri)
-    - cron: '0 1 * * 1-5'
-    # 15:00 SGT Mon–Fri  (SGT UTC+8 => 08:00 UTC Mon–Fri)
-    - cron: '0 7 * * 1-5'
+    - cron: "0 22 * * 0-4"
+    # 09:00 SGT Mon–Fri  (SGT UTC+8 => 01:00 UTC Mon–Fri)
+    - cron: "0 1 * * 1-5"
+    # 15:00 SGT Mon–Fri  (SGT UTC+8 => 07:00 UTC Mon–Fri)
+    - cron: "0 7 * * 1-5"
 
   workflow_dispatch:
     inputs:
@@ -35,7 +35,7 @@ concurrency:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 480   # allow up to 8h if you want longer runs
+    timeout-minutes: 480
     permissions:
       contents: write
 
@@ -66,42 +66,68 @@ jobs:
             echo "Initialized new checklists.json"
           fi
 
-      - name: Decide duration by schedule
+      - name: Decide run mode (duration/poll/run_kind) by schedule or manual inputs
         id: decide
         shell: bash
         run: |
-          # Default (manual)
+          set -euo pipefail
+
+          # Defaults for workflow_dispatch (manual)
           DURATION="${{ github.event.inputs.duration_minutes || '30' }}"
           SEND_POLL="${{ github.event.inputs.send_poll_on_start || 'false' }}"
+          RUN_KIND="manual"
 
-          # If schedule trigger, choose duration (customize as you like)
+          # If schedule trigger, choose based on the cron string
+          # Note: github.event.schedule is populated for scheduled events
           if [[ -n "${{ github.event.schedule }}" ]]; then
             CRON="${{ github.event.schedule }}"
+
             if [[ "$CRON" == "0 22 * * 0-4" ]]; then
-              # 06:00 SGT run (example: 4 hours)
+              # 06:00 SGT run
               DURATION="240"
               SEND_POLL="true"
-            elif [[ "$CRON" == "0 4 * * 1-5" ]]; then
-              # 12:00 SGT run (example: 420 minutes = 7 hours)
+              RUN_KIND="morning"
+            elif [[ "$CRON" == "0 1 * * 1-5" ]]; then
+              # 09:00 SGT run
               DURATION="420"
-            elif [[ "$CRON" == "0 8 * * 1-5" ]]; then
-              # 16:00 SGT run (example: 90 minutes)
+              SEND_POLL="false"
+              RUN_KIND="noon"
+            elif [[ "$CRON" == "0 7 * * 1-5" ]]; then
+              # 15:00 SGT run
               DURATION="90"
+              SEND_POLL="false"
+              RUN_KIND="afternoon"
+            else
+              # Unknown schedule (shouldn't happen unless the cron list changes)
+              RUN_KIND="scheduled"
             fi
           fi
 
-          echo "duration=$DURATION" >> $GITHUB_OUTPUT
-          echo "send_poll=$SEND_POLL" >> $GITHUB_OUTPUT
+          echo "duration=$DURATION"   >> "$GITHUB_OUTPUT"
+          echo "send_poll=$SEND_POLL" >> "$GITHUB_OUTPUT"
+          echo "run_kind=$RUN_KIND"   >> "$GITHUB_OUTPUT"
+
+          echo "Selected: duration=$DURATION, send_poll=$SEND_POLL, run_kind=$RUN_KIND"
 
       - name: Run bot
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
+
+          # Bot runtime behavior
           DROP_PENDING: "true"
           VERBOSE: ${{ github.event.inputs.verbose || 'false' }}
           DURATION_MINUTES: ${{ steps.decide.outputs.duration }}
           SLEEP_WARNING_SECONDS: "60"
-          SEND_POLL_ON_START: ${{ steps.decide.outputs.send_poll }}
+
+          # FIXED: these are the env vars your checklist.js actually reads
+          SEND_MORNING_POLL: ${{ steps.decide.outputs.send_poll }}
+          RUN_KIND: ${{ steps.decide.outputs.run_kind }}
+
+          # Optional (recommended) boot semantics — only effective if you add the matching env reads in checklist.js
+          # RESET_CHECKS_ON_BOOT: "true"
+          # CLEAR_ACTIVE_DUTY_ON_BOOT: "true"
+
         run: node checklist.js
 
       - name: Commit & push updated checklists.json
