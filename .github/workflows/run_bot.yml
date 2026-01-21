@@ -3,7 +3,7 @@ name: Run Telegram Checklist Bot
 on:
   schedule:
     # 06:00 SGT Mon–Fri  (SGT UTC+8 => 22:00 UTC previous day, Sun–Thu)
-    - cron: "48 7 * * 0-4"
+    - cron: "0 22 * * 0-4"
     # 09:00 SGT Mon–Fri  (SGT UTC+8 => 01:00 UTC Mon–Fri)
     - cron: "0 1 * * 1-5"
     # 15:00 SGT Mon–Fri  (SGT UTC+8 => 07:00 UTC Mon–Fri)
@@ -82,7 +82,7 @@ jobs:
           if [[ -n "${{ github.event.schedule }}" ]]; then
             CRON="${{ github.event.schedule }}"
 
-            if [[ "$CRON" == "48 7 * * 0-4" ]]; then
+            if [[ "$CRON" == "0 22 * * 0-4" ]]; then
               # 06:00 SGT run
               DURATION="240"
               SEND_POLL="true"
