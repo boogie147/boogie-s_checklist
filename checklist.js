@@ -4,31 +4,15 @@
 //    - SEND_MORNING_POLL=true AND
 //    - (RUN_KIND==="morning" OR bot starts within MORNING_POLL_WINDOW_MINUTES after 06:00 SGT) AND
 //    - not already sent today (SGT) (persisted guard)
-// ✅ DM checklist supports ticking items via reply-keyboard menu (one button per item)
-// ✅ DM UI: Refresh, Add, Clear checks, Compact/Full view, Remove mode (removes EXTRA items only)
-// ✅ /menu restores the reply keyboard (restoring + restored)
-// ✅ Inline "Restore menu" fallback button in DM
-// ✅ Group: bot posts "Start Duty" inline button whenever it comes online
-// ✅ Before sleeping, bot reports checklist completion status to the GROUP
-// ✅ Reminders at 30/45/50 minutes after start (group + DM duty user)
-// ✅ /help command (DM + group)
-// ✅ In DM, adding extra tasks is DENIED unless user is allowlisted (or admin in group) when ADD_REQUIRE_ALLOWLIST=true
+// ✅ NEW: Optional boot semantics (recommended for GitHub Actions):
+//    - RESET_CHECKS_ON_BOOT=true  => clears all users' checkmarks on every start
+//    - CLEAR_ACTIVE_DUTY_ON_BOOT=true => clears active duty on every start
+// ✅ NEW: Optional non-hardcoded baseline list:
+//    - If base_items.json exists, it will be used (or set BASE_ITEMS_PATH env)
 
 const TelegramBot = require("node-telegram-bot-api");
 const fs = require("fs");
 const path = require("path");
-
-// ===================== Hard-coded baseline checklist =====================
-const BASE_ITEMS = [
-  "Update ration status in COS chat for every meal",
-  "Update attendance list",
-  "Make sure keypress book is closed properly before HOTO",
-  "Make sure all keys are accounted for in keypress",
-  "Clear desk policy (inclusive of clearing of shredding tray)",
-  "Ensure tidiness in office",
-  "Clear trash",
-  "Off all relevant switch",
-];
 
 // ===================== Config / env =====================
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -55,13 +39,53 @@ const ADD_REQUIRE_ALLOWLIST = String(process.env.ADD_REQUIRE_ALLOWLIST || "true"
 // Poll behavior
 const SEND_MORNING_POLL = String(process.env.SEND_MORNING_POLL || "true") === "true";
 
-// NEW: "operating around 0600 SGT" window logic
+// "operating around 0600 SGT" window logic
 const MORNING_POLL_SGT_HOUR = Number(process.env.MORNING_POLL_SGT_HOUR || 6);
 const MORNING_POLL_SGT_MINUTE = Number(process.env.MORNING_POLL_SGT_MINUTE || 0);
 const MORNING_POLL_WINDOW_MINUTES = Number(process.env.MORNING_POLL_WINDOW_MINUTES || 20);
 
+// Boot semantics (NEW)
+const RESET_CHECKS_ON_BOOT = String(process.env.RESET_CHECKS_ON_BOOT || "false") === "true";
+const CLEAR_ACTIVE_DUTY_ON_BOOT = String(process.env.CLEAR_ACTIVE_DUTY_ON_BOOT || "false") === "true";
+
 // Safety
 const DROP_PENDING = String(process.env.DROP_PENDING || "true") === "true";
+
+// ===================== Baseline checklist (non-hardcoded if file exists) =====================
+const BASE_ITEMS_PATH = process.env.BASE_ITEMS_PATH
+  ? path.resolve(process.env.BASE_ITEMS_PATH)
+  : path.resolve(__dirname, "base_items.json");
+
+function loadBaseItems() {
+  // Fallback compiled defaults if file is missing/invalid
+  const fallback = [
+    "Update ration status in COS chat for every meal",
+    "Update attendance list",
+    "Make sure keypress book is closed properly before HOTO",
+    "Make sure all keys are accounted for in keypress",
+    "Clear desk policy (inclusive of clearing of shredding tray)",
+    "Ensure tidiness in office",
+    "Clear trash",
+    "Off all relevant switch",
+  ];
+
+  try {
+    if (!fs.existsSync(BASE_ITEMS_PATH)) return fallback;
+    const raw = fs.readFileSync(BASE_ITEMS_PATH, "utf8");
+    const arr = JSON.parse(raw);
+
+    if (!Array.isArray(arr) || !arr.every((x) => typeof x === "string" && x.trim())) {
+      throw new Error("base_items.json must be a JSON array of non-empty strings");
+    }
+
+    return arr.map((s) => s.trim());
+  } catch (e) {
+    console.warn("⚠️ Failed to load base_items.json; using fallback BASE_ITEMS. Reason:", e?.message || e);
+    return fallback;
+  }
+}
+
+const BASE_ITEMS = loadBaseItems();
 
 // ===================== Bot =====================
 const bot = new TelegramBot(BOT_TOKEN, { polling: false });
@@ -169,6 +193,26 @@ function getActiveDuty() {
   return DB.duty.active;
 }
 
+// ===================== Boot reset helpers (NEW) =====================
+function resetChecksForUser(uid) {
+  const st = getUserState(uid);
+  st.baseDone = BASE_ITEMS.map(() => false);
+  for (const it of st.extra) it.done = false;
+  st.removeMode = false; // UX: avoid being stuck in remove mode after restart
+  saveData(DB);
+}
+
+function resetAllUsersChecks() {
+  ensureRoot();
+  for (const uid of Object.keys(DB.users)) {
+    const st = getUserState(uid);
+    st.baseDone = BASE_ITEMS.map(() => false);
+    for (const it of st.extra) it.done = false;
+    st.removeMode = false;
+  }
+  saveData(DB);
+}
+
 // ===================== Utils =====================
 const escapeHtml = (s) =>
   String(s).replace(/[&<>"']/g, (m) => ({
@@ -185,11 +229,7 @@ async function safeGetChatMemberName(chatId, userId) {
   try {
     const m = await bot.getChatMember(chatId, userId);
     const u = m?.user || {};
-    return (
-      [u.first_name, u.last_name].filter(Boolean).join(" ") ||
-      u.username ||
-      `id:${userId}`
-    );
+    return [u.first_name, u.last_name].filter(Boolean).join(" ") || u.username || `id:${userId}`;
   } catch {
     return `id:${userId}`;
   }
@@ -234,7 +274,7 @@ function nowSgtParts() {
 }
 
 function minutesSinceSgt(h, m, targetH, targetM) {
-  return (h * 60 + m) - (targetH * 60 + targetM);
+  return h * 60 + m - (targetH * 60 + targetM);
 }
 
 function shouldSendMorningPollNow() {
@@ -271,6 +311,11 @@ function helpText(isDm) {
     ? "Adding/removing EXTRA tasks is restricted: only /allow-listed users (or group admins) may add/remove."
     : "Allowlist enforcement is OFF: anyone can add/remove EXTRA tasks in DM.";
 
+  const bootNote = [
+    `RESET_CHECKS_ON_BOOT=${RESET_CHECKS_ON_BOOT}`,
+    `CLEAR_ACTIVE_DUTY_ON_BOOT=${CLEAR_ACTIVE_DUTY_ON_BOOT}`,
+  ].join(", ");
+
   return [
     `<b>Checklist Bot — Help</b>`,
     ``,
@@ -301,11 +346,14 @@ function helpText(isDm) {
     `• /whoallowed — list allowlisted users`,
     ``,
     `<b>Automation</b>`,
-    `• Morning poll: sends when RUN_KIND="morning" OR within ${MORNING_POLL_WINDOW_MINUTES} minutes after ${String(MORNING_POLL_SGT_HOUR).padStart(2,"0")}:${String(MORNING_POLL_SGT_MINUTE).padStart(2,"0")} SGT (once per SGT day).`,
+    `• Morning poll: sends when RUN_KIND="morning" OR within ${MORNING_POLL_WINDOW_MINUTES} minutes after ${String(MORNING_POLL_SGT_HOUR).padStart(2, "0")}:${String(MORNING_POLL_SGT_MINUTE).padStart(2, "0")} SGT (once per SGT day).`,
     `• Run reminders: 30/45/50 min — posts checklist status to group and DM duty user.`,
     ``,
     `<b>Allowlist policy</b>`,
     `• ${allowNote}`,
+    ``,
+    `<b>Boot semantics</b>`,
+    `• ${escapeHtml(bootNote)}`,
   ].join("\n");
 }
 
@@ -313,8 +361,7 @@ function helpText(isDm) {
 function checklistStats(uid) {
   const st = getUserState(uid);
   const total = BASE_ITEMS.length + st.extra.length;
-  const doneCount =
-    st.baseDone.filter(Boolean).length + st.extra.filter((x) => x.done).length;
+  const doneCount = st.baseDone.filter(Boolean).length + st.extra.filter((x) => x.done).length;
   return { total, doneCount, complete: total > 0 && doneCount === total };
 }
 
@@ -372,10 +419,7 @@ function buildDmReplyKeyboard(uid) {
 
   const rows = [
     [{ text: "➕ Add" }, { text: "🔄 Refresh" }],
-    [
-      { text: st.removeMode ? "✅ Done removing" : "🗑 Remove mode" },
-      { text: "🧹 Clear checks" },
-    ],
+    [{ text: st.removeMode ? "✅ Done removing" : "🗑 Remove mode" }, { text: "🧹 Clear checks" }],
     [{ text: st.compact ? "📝 Full view" : "📋 Compact view" }],
   ];
 
@@ -405,13 +449,6 @@ async function sendDmChecklist(uid) {
       inline_keyboard: [[{ text: "🔧 Restore menu", callback_data: "restore_menu" }]],
     },
   });
-}
-
-function resetChecksForUser(uid) {
-  const st = getUserState(uid);
-  st.baseDone = BASE_ITEMS.map(() => false);
-  for (const it of st.extra) it.done = false;
-  saveData(DB);
 }
 
 function formatStatusLine(uid) {
@@ -492,10 +529,7 @@ async function sendRunReminder(minMark) {
   if (GROUP_CHAT_ID && String(active.groupChatId) === String(GROUP_CHAT_ID)) {
     try {
       const name = await safeGetChatMemberName(GROUP_CHAT_ID, dutyUid);
-      await bot.sendMessage(
-        GROUP_CHAT_ID,
-        `⏱️ ${minMark} min — Duty: ${name} — ${formatStatusLine(dutyUid)}`
-      );
+      await bot.sendMessage(GROUP_CHAT_ID, `⏱️ ${minMark} min — Duty: ${name} — ${formatStatusLine(dutyUid)}`);
     } catch (e) {
       console.error("group reminder error:", e?.response?.body || e);
     }
@@ -503,10 +537,7 @@ async function sendRunReminder(minMark) {
 
   // DM reminder with status + checklist view
   try {
-    await bot.sendMessage(
-      dutyUid,
-      `⏱️ ${minMark} min reminder — your status: ${formatStatusLine(dutyUid)}`
-    );
+    await bot.sendMessage(dutyUid, `⏱️ ${minMark} min reminder — your status: ${formatStatusLine(dutyUid)}`);
     await sendDmChecklist(dutyUid);
   } catch (e) {
     if (VERBOSE) console.warn("dm reminder failed:", e?.response?.body || e);
@@ -517,10 +548,9 @@ function scheduleRunReminders() {
   const marks = [30, 45, 50];
   for (const m of marks) {
     if (DURATION_MINUTES > 0 && m >= DURATION_MINUTES) continue;
+
     setTimeout(() => {
-      sendRunReminder(m).catch((e) =>
-        console.error("sendRunReminder error:", e?.response?.body || e)
-      );
+      sendRunReminder(m).catch((e) => console.error("sendRunReminder error:", e?.response?.body || e));
     }, m * 60 * 1000);
 
     if (VERBOSE) console.log(`Reminder scheduled at +${m}min`);
@@ -658,7 +688,9 @@ bot.on("callback_query", async (q) => {
   const fromId = q.from?.id;
   const msg = q.message;
 
-  try { await bot.answerCallbackQuery(q.id); } catch {}
+  try {
+    await bot.answerCallbackQuery(q.id);
+  } catch {}
 
   if (!fromId) return;
 
@@ -674,239 +706,7 @@ bot.on("callback_query", async (q) => {
   }
 
   if (data === "start_duty") {
-    const groupId = GROUP_CHAT_ID ? String(GROUP_CHAT_ID) : (msg ? String(msg.chat.id) : null);
+    const groupId = GROUP_CHAT_ID ? String(GROUP_CHAT_ID) : msg ? String(msg.chat.id) : null;
     if (!groupId) return;
 
-    setActiveDuty(fromId, groupId);
-
-    try {
-      const name = await safeGetChatMemberName(groupId, fromId);
-      await bot.sendMessage(groupId, `✅ Duty started: ${name}. Checklist will be in DM.`);
-    } catch {}
-
-    try {
-      await bot.sendMessage(fromId, "You are now on duty. Here is your checklist:");
-      await sendDmChecklist(fromId);
-    } catch (e) {
-      try {
-        await bot.sendMessage(
-          groupId,
-          "⚠️ I could not DM you. Please open the bot and send /start once, then tap Start Duty again."
-        );
-      } catch {}
-      console.error("start_duty DM error:", e?.response?.body || e);
-    }
-    return;
-  }
-});
-
-// ===================== DM message handler (reply keyboard + item toggles) =====================
-bot.on("message", async (msg) => {
-  if (!msg.text) return;
-
-  if (/^\/(start|help|menu|clear|allow|deny|whoallowed)\b/i.test(msg.text)) return;
-  if (msg.chat.type !== "private") return;
-
-  const uid = msg.from?.id;
-  if (!uid) return;
-
-  const st = getUserState(uid);
-
-  if (msg.text === "🔄 Refresh") {
-    await sendDmChecklist(uid);
-    return;
-  }
-
-  if (msg.text === "🧹 Clear checks") {
-    resetChecksForUser(uid);
-    await sendDmChecklist(uid);
-    return;
-  }
-
-  if (msg.text === "📋 Compact view") {
-    st.compact = true;
-    saveData(DB);
-    await sendDmChecklist(uid);
-    return;
-  }
-
-  if (msg.text === "📝 Full view") {
-    st.compact = false;
-    saveData(DB);
-    await sendDmChecklist(uid);
-    return;
-  }
-
-  if (msg.text === "🗑 Remove mode") {
-    if (!(await canUserModifyExtras(uid))) {
-      await bot.sendMessage(uid, "🚫 You are not allowed to remove tasks. Ask an admin to /allow you in the group.");
-      return;
-    }
-    st.removeMode = true;
-    saveData(DB);
-    await bot.sendMessage(uid, "Remove mode ON. Tap an EXTRA item button to delete it, or press “✅ Done removing”.");
-    return;
-  }
-
-  if (msg.text === "✅ Done removing") {
-    st.removeMode = false;
-    saveData(DB);
-    await bot.sendMessage(uid, "Remove mode OFF.");
-    await sendDmChecklist(uid);
-    return;
-  }
-
-  if (msg.text === "➕ Add") {
-    if (!(await canUserModifyExtras(uid))) {
-      await bot.sendMessage(uid, "🚫 You are not allowed to add tasks. Ask an admin to /allow you in the group.");
-      return;
-    }
-    await bot.sendMessage(uid, "Send the extra task text:", { reply_markup: { force_reply: true } });
-    return;
-  }
-
-  if (msg.reply_to_message && /Send the extra task text:/i.test(msg.reply_to_message.text || "")) {
-    if (!(await canUserModifyExtras(uid))) {
-      await bot.sendMessage(uid, "🚫 You are not allowed to add tasks. Ask an admin to /allow you in the group.");
-      return;
-    }
-    const t = msg.text.trim();
-    if (!t) return;
-    st.extra.push({ text: t, done: false });
-    saveData(DB);
-    await sendDmChecklist(uid);
-    return;
-  }
-
-  const mm = msg.text.match(/#(\d+)/);
-  if (mm) {
-    const n = parseInt(mm[1], 10);
-    const idx0 = n - 1;
-    const baseLen = BASE_ITEMS.length;
-    const extraLen = st.extra.length;
-
-    if (idx0 >= 0 && idx0 < baseLen) {
-      st.baseDone[idx0] = !st.baseDone[idx0];
-      saveData(DB);
-      await sendDmChecklist(uid);
-      return;
-    }
-
-    if (idx0 >= baseLen && idx0 < baseLen + extraLen) {
-      const extraIndex = idx0 - baseLen;
-
-      if (st.removeMode) {
-        if (!(await canUserModifyExtras(uid))) {
-          await bot.sendMessage(uid, "🚫 You are not allowed to remove tasks. Ask an admin to /allow you in the group.");
-          return;
-        }
-        st.extra.splice(extraIndex, 1);
-      } else {
-        st.extra[extraIndex].done = !st.extra[extraIndex].done;
-      }
-
-      saveData(DB);
-      await sendDmChecklist(uid);
-      return;
-    }
-  }
-
-  const t = msg.text.trim();
-  if (t) {
-    if (!(await canUserModifyExtras(uid))) {
-      await bot.sendMessage(uid, "🚫 You are not allowed to add tasks. Ask an admin to /allow you in the group.");
-      return;
-    }
-    st.extra.push({ text: t, done: false });
-    saveData(DB);
-    await sendDmChecklist(uid);
-  }
-});
-
-// ===================== Startup / Shutdown =====================
-process.on("unhandledRejection", (e) => console.error("unhandledRejection:", e?.response?.body || e));
-process.on("uncaughtException", (e) => console.error("uncaughtException:", e?.response?.body || e));
-
-const HEARTBEAT = setInterval(() => {
-  if (VERBOSE) console.log("…heartbeat");
-}, 10_000);
-
-async function gracefulShutdown(reason) {
-  try {
-    if (VERBOSE) console.log("Shutdown:", reason);
-    await announceSleepSummaryToGroup();
-  } catch {}
-  try { clearInterval(HEARTBEAT); } catch {}
-  process.exit(0);
-}
-
-(async function main() {
-  try {
-    const me = await bot.getMe();
-    console.log(`🤖 Bot @${me.username} (ID ${me.id}) starting…`);
-
-    if (!GROUP_CHAT_ID) {
-      console.warn("⚠️ CHAT_ID is not set. Group announcements will not be sent.");
-    }
-
-    try {
-      await bot.deleteWebHook({ drop_pending_updates: DROP_PENDING });
-      console.log(`✅ Webhook cleared. (drop_pending_updates=${DROP_PENDING})`);
-    } catch (e) {
-      console.warn("⚠️ deleteWebHook failed (continuing):", e?.response?.body || e);
-    }
-
-    await bot.startPolling({
-      interval: 300,
-      params: { timeout: 50, allowed_updates: ["message", "callback_query"] },
-    });
-    console.log("📡 Polling started.");
-
-    if (GROUP_CHAT_ID) {
-      await announceAwakeToGroup();
-      await sendStartDutyPromptToGroup();
-
-      // NEW robust poll logic:
-      // - send if (RUN_KIND==="morning") OR if within window after 06:00 SGT
-      // - but only once per SGT day (persisted)
-      if (shouldSendMorningPollNow() && !alreadySentMorningPollToday()) {
-        if (VERBOSE) {
-          const p = nowSgtParts();
-          console.log(`Morning poll sending (SGT ${p.hour}:${p.minute})`);
-        }
-        await sendMorningPollToGroup();
-        markMorningPollSentToday();
-      } else if (VERBOSE) {
-        const p = nowSgtParts();
-        console.log(
-          `Morning poll NOT sent. shouldSend=${shouldSendMorningPollNow()} alreadySentToday=${alreadySentMorningPollToday()} (SGT ${p.hour}:${p.minute})`
-        );
-      }
-    }
-
-    // Schedule run reminders at 30/45/50 minutes
-    scheduleRunReminders();
-
-    // Auto-stop
-    if (DURATION_MINUTES > 0) {
-      const durMs = DURATION_MINUTES * 60 * 1000;
-      const warnMs = Math.max(0, durMs - (SLEEP_WARNING_SECONDS * 1000));
-
-      if (warnMs > 0) {
-        setTimeout(async () => {
-          try { await announceSleepWarningToGroup(); } catch {}
-        }, warnMs);
-      }
-
-      setTimeout(() => gracefulShutdown("duration elapsed"), durMs);
-    } else {
-      console.log("🟢 Auto-stop disabled (DURATION_MINUTES=0).");
-    }
-  } catch (e) {
-    console.error("❌ Fatal startup error:", e?.response?.body || e);
-    process.exit(1);
-  }
-})();
-
-process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
-process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+    setAc
