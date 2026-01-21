@@ -175,16 +175,17 @@
       "compact": false,
       "removeMode": false,
       "baseDone": [
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
         false
       ],
-      "extra": []
+      "extra": [],
+      "menuHintBootId": "2026-01-21T08:47:49.708Z"
     }
   },
   "allow": {
