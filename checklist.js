@@ -709,4 +709,259 @@ bot.on("callback_query", async (q) => {
     const groupId = GROUP_CHAT_ID ? String(GROUP_CHAT_ID) : msg ? String(msg.chat.id) : null;
     if (!groupId) return;
 
-    setAc
+    setActiveDuty(fromId, groupId);
+
+    try {
+      const name = await safeGetChatMemberName(groupId, fromId);
+      await bot.sendMessage(groupId, `✅ Duty started: ${name}. Checklist will be in DM.`);
+    } catch {}
+
+    try {
+      await bot.sendMessage(fromId, "You are now on duty. Here is your checklist:");
+      await sendDmChecklist(fromId);
+    } catch (e) {
+      try {
+        await bot.sendMessage(
+          groupId,
+          "⚠️ I could not DM you. Please open the bot and send /start once, then tap Start Duty again."
+        );
+      } catch {}
+      console.error("start_duty DM error:", e?.response?.body || e);
+    }
+    return;
+  }
+});
+
+// ===================== DM message handler (reply keyboard + item toggles) =====================
+bot.on("message", async (msg) => {
+  if (!msg.text) return;
+
+  if (/^\/(start|help|menu|clear|allow|deny|whoallowed)\b/i.test(msg.text)) return;
+  if (msg.chat.type !== "private") return;
+
+  const uid = msg.from?.id;
+  if (!uid) return;
+
+  const st = getUserState(uid);
+
+  if (msg.text === "🔄 Refresh") {
+    await sendDmChecklist(uid);
+    return;
+  }
+
+  if (msg.text === "🧹 Clear checks") {
+    resetChecksForUser(uid);
+    await sendDmChecklist(uid);
+    return;
+  }
+
+  if (msg.text === "📋 Compact view") {
+    st.compact = true;
+    saveData(DB);
+    await sendDmChecklist(uid);
+    return;
+  }
+
+  if (msg.text === "📝 Full view") {
+    st.compact = false;
+    saveData(DB);
+    await sendDmChecklist(uid);
+    return;
+  }
+
+  if (msg.text === "🗑 Remove mode") {
+    if (!(await canUserModifyExtras(uid))) {
+      await bot.sendMessage(uid, "🚫 You are not allowed to remove tasks. Ask an admin to /allow you in the group.");
+      return;
+    }
+    st.removeMode = true;
+    saveData(DB);
+    await bot.sendMessage(uid, "Remove mode ON. Tap an EXTRA item button to delete it, or press “✅ Done removing”.");
+    return;
+  }
+
+  if (msg.text === "✅ Done removing") {
+    st.removeMode = false;
+    saveData(DB);
+    await bot.sendMessage(uid, "Remove mode OFF.");
+    await sendDmChecklist(uid);
+    return;
+  }
+
+  if (msg.text === "➕ Add") {
+    if (!(await canUserModifyExtras(uid))) {
+      await bot.sendMessage(uid, "🚫 You are not allowed to add tasks. Ask an admin to /allow you in the group.");
+      return;
+    }
+    await bot.sendMessage(uid, "Send the extra task text:", { reply_markup: { force_reply: true } });
+    return;
+  }
+
+  if (msg.reply_to_message && /Send the extra task text:/i.test(msg.reply_to_message.text || "")) {
+    if (!(await canUserModifyExtras(uid))) {
+      await bot.sendMessage(uid, "🚫 You are not allowed to add tasks. Ask an admin to /allow you in the group.");
+      return;
+    }
+    const t = msg.text.trim();
+    if (!t) return;
+    st.extra.push({ text: t, done: false });
+    saveData(DB);
+    await sendDmChecklist(uid);
+    return;
+  }
+
+  const mm = msg.text.match(/#(\d+)/);
+  if (mm) {
+    const n = parseInt(mm[1], 10);
+    const idx0 = n - 1;
+    const baseLen = BASE_ITEMS.length;
+    const extraLen = st.extra.length;
+
+    if (idx0 >= 0 && idx0 < baseLen) {
+      st.baseDone[idx0] = !st.baseDone[idx0];
+      saveData(DB);
+      await sendDmChecklist(uid);
+      return;
+    }
+
+    if (idx0 >= baseLen && idx0 < baseLen + extraLen) {
+      const extraIndex = idx0 - baseLen;
+
+      if (st.removeMode) {
+        if (!(await canUserModifyExtras(uid))) {
+          await bot.sendMessage(uid, "🚫 You are not allowed to remove tasks. Ask an admin to /allow you in the group.");
+          return;
+        }
+        st.extra.splice(extraIndex, 1);
+      } else {
+        st.extra[extraIndex].done = !st.extra[extraIndex].done;
+      }
+
+      saveData(DB);
+      await sendDmChecklist(uid);
+      return;
+    }
+  }
+
+  const t = msg.text.trim();
+  if (t) {
+    if (!(await canUserModifyExtras(uid))) {
+      await bot.sendMessage(uid, "🚫 You are not allowed to add tasks. Ask an admin to /allow you in the group.");
+      return;
+    }
+    st.extra.push({ text: t, done: false });
+    saveData(DB);
+    await sendDmChecklist(uid);
+  }
+});
+
+// ===================== Startup / Shutdown =====================
+process.on("unhandledRejection", (e) => console.error("unhandledRejection:", e?.response?.body || e));
+process.on("uncaughtException", (e) => console.error("uncaughtException:", e?.response?.body || e));
+
+const HEARTBEAT = setInterval(() => {
+  if (VERBOSE) console.log("…heartbeat");
+}, 10_000);
+
+async function gracefulShutdown(reason) {
+  try {
+    if (VERBOSE) console.log("Shutdown:", reason);
+    await announceSleepSummaryToGroup();
+  } catch {}
+  try {
+    clearInterval(HEARTBEAT);
+  } catch {}
+  process.exit(0);
+}
+
+(async function main() {
+  try {
+    const me = await bot.getMe();
+    console.log(`🤖 Bot @${me.username} (ID ${me.id}) starting…`);
+
+    if (!GROUP_CHAT_ID) {
+      console.warn("⚠️ CHAT_ID is not set. Group announcements will not be sent.");
+    }
+
+    // Ensure DB schema exists before boot actions
+    ensureRoot();
+
+    // NEW: Boot reset semantics (run before webhook clear / polling / announcements)
+    if (CLEAR_ACTIVE_DUTY_ON_BOOT) {
+      clearActiveDuty();
+      if (VERBOSE) console.log("Boot: active duty cleared.");
+    }
+    if (RESET_CHECKS_ON_BOOT) {
+      resetAllUsersChecks();
+      if (VERBOSE) console.log("Boot: all user checks reset.");
+    }
+
+    try {
+      await bot.deleteWebHook({ drop_pending_updates: DROP_PENDING });
+      console.log(`✅ Webhook cleared. (drop_pending_updates=${DROP_PENDING})`);
+    } catch (e) {
+      console.warn("⚠️ deleteWebHook failed (continuing):", e?.response?.body || e);
+    }
+
+    await bot.startPolling({
+      interval: 300,
+      params: { timeout: 50, allowed_updates: ["message", "callback_query"] },
+    });
+    console.log("📡 Polling started.");
+
+    if (GROUP_CHAT_ID) {
+      await announceAwakeToGroup();
+      await sendStartDutyPromptToGroup();
+
+      // Morning poll logic:
+      // - send if (RUN_KIND==="morning") OR if within window after 06:00 SGT
+      // - but only once per SGT day (persisted)
+      if (shouldSendMorningPollNow() && !alreadySentMorningPollToday()) {
+        if (VERBOSE) {
+          const p = nowSgtParts();
+          console.log(
+            `Morning poll sending: shouldSend=${shouldSendMorningPollNow()} alreadySentToday=${alreadySentMorningPollToday()} (SGT ${String(
+              p.hour
+            ).padStart(2, "0")}:${String(p.minute).padStart(2, "0")})`
+          );
+        }
+        await sendMorningPollToGroup();
+        markMorningPollSentToday();
+      } else if (VERBOSE) {
+        const p = nowSgtParts();
+        console.log(
+          `Morning poll NOT sent. shouldSend=${shouldSendMorningPollNow()} alreadySentToday=${alreadySentMorningPollToday()} (RUN_KIND=${RUN_KIND}, SEND_MORNING_POLL=${SEND_MORNING_POLL}, SGT ${String(
+            p.hour
+          ).padStart(2, "0")}:${String(p.minute).padStart(2, "0")})`
+        );
+      }
+    }
+
+    // Schedule run reminders at 30/45/50 minutes
+    scheduleRunReminders();
+
+    // Auto-stop
+    if (DURATION_MINUTES > 0) {
+      const durMs = DURATION_MINUTES * 60 * 1000;
+      const warnMs = Math.max(0, durMs - SLEEP_WARNING_SECONDS * 1000);
+
+      if (warnMs > 0) {
+        setTimeout(async () => {
+          try {
+            await announceSleepWarningToGroup();
+          } catch {}
+        }, warnMs);
+      }
+
+      setTimeout(() => gracefulShutdown("duration elapsed"), durMs);
+    } else {
+      console.log("🟢 Auto-stop disabled (DURATION_MINUTES=0).");
+    }
+  } catch (e) {
+    console.error("❌ Fatal startup error:", e?.response?.body || e);
+    process.exit(1);
+  }
+})();
+
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
