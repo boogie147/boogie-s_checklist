@@ -2,8 +2,18 @@
 // DM-only checklist + group announcements (poll + "Start Duty" button)
 // ✅ Morning poll sends if:
 //    - SEND_MORNING_POLL=true AND
-//    - (RUN_KIND==="morning" OR bot starts within MORNING_POLL_WINDOW_MINUTES after 06:00 SGT) AND
+//    - bot starts within 60 minutes after 06:00 SGT AND
 //    - not already sent today (SGT) (persisted guard)
+// ✅ DM checklist supports ticking items via reply-keyboard menu (one button per item)
+// ✅ DM UI: Refresh, Add, Clear checks, Compact/Full view, Remove mode (removes EXTRA items only)
+// ✅ /menu restores the reply keyboard (restoring + restored)
+// ✅ NEW: Inline restore menu button REMOVED
+// ✅ NEW: DM reminder about /menu is sent ONCE per bot run (boot) when the user receives a DM checklist
+// ✅ Group: bot posts "Start Duty" inline button whenever it comes online
+// ✅ Before sleeping, bot reports checklist completion status to the GROUP
+// ✅ Reminders at 30/45/50 minutes after start (group + DM duty user)
+// ✅ /help command (DM + group)
+// ✅ In DM, adding extra tasks is DENIED unless user is allowlisted (or admin in group) when ADD_REQUIRE_ALLOWLIST=true
 // ✅ NEW: Optional boot semantics (recommended for GitHub Actions):
 //    - RESET_CHECKS_ON_BOOT=true  => clears all users' checkmarks on every start
 //    - CLEAR_ACTIVE_DUTY_ON_BOOT=true => clears active duty on every start
@@ -26,9 +36,6 @@ const VERBOSE = String(process.env.VERBOSE || "false") === "true";
 // REQUIRED for your group announcements (poll + start-duty prompt + sleep summary)
 const GROUP_CHAT_ID = ((process.env.CHAT_ID || "").trim()) || null;
 
-// Useful if your CI runs multiple times/day
-const RUN_KIND = String(process.env.RUN_KIND || "manual"); // morning/noon/afternoon/manual
-
 // How long to keep bot online before auto-stop
 const DURATION_MINUTES = Number(process.env.DURATION_MINUTES || 30); // 0 = no auto-stop
 const SLEEP_WARNING_SECONDS = Number(process.env.SLEEP_WARNING_SECONDS || 60);
@@ -39,17 +46,20 @@ const ADD_REQUIRE_ALLOWLIST = String(process.env.ADD_REQUIRE_ALLOWLIST || "true"
 // Poll behavior
 const SEND_MORNING_POLL = String(process.env.SEND_MORNING_POLL || "true") === "true";
 
-// "operating around 0600 SGT" window logic
+// Morning poll timing (SGT, fixed 06:00 with 60-min tolerance)
 const MORNING_POLL_SGT_HOUR = Number(process.env.MORNING_POLL_SGT_HOUR || 6);
 const MORNING_POLL_SGT_MINUTE = Number(process.env.MORNING_POLL_SGT_MINUTE || 0);
-const MORNING_POLL_WINDOW_MINUTES = Number(process.env.MORNING_POLL_WINDOW_MINUTES || 20);
+const MORNING_POLL_WINDOW_MINUTES = Number(process.env.MORNING_POLL_WINDOW_MINUTES || 60);
 
-// Boot semantics (NEW)
+// Boot semantics
 const RESET_CHECKS_ON_BOOT = String(process.env.RESET_CHECKS_ON_BOOT || "false") === "true";
 const CLEAR_ACTIVE_DUTY_ON_BOOT = String(process.env.CLEAR_ACTIVE_DUTY_ON_BOOT || "false") === "true";
 
-// Safety
+// Safety (KEEP UNTOUCHED per your request)
 const DROP_PENDING = String(process.env.DROP_PENDING || "true") === "true";
+
+// Unique per-process boot marker (used to send /menu hint once per run)
+const BOOT_ID = new Date().toISOString();
 
 // ===================== Baseline checklist (non-hardcoded if file exists) =====================
 const BASE_ITEMS_PATH = process.env.BASE_ITEMS_PATH
@@ -119,7 +129,8 @@ let DB = loadData();
  *       compact: boolean,
  *       removeMode: boolean,
  *       baseDone: boolean[],
- *       extra: [{ text, done }]
+ *       extra: [{ text, done }],
+ *       menuHintBootId: string | null
  *     }
  *   },
  *   allow: { [groupChatId]: number[] },
@@ -146,6 +157,7 @@ function getUserState(uid) {
       removeMode: false,
       baseDone: BASE_ITEMS.map(() => false),
       extra: [],
+      menuHintBootId: null,
     };
     saveData(DB);
   }
@@ -163,6 +175,8 @@ function getUserState(uid) {
   }
 
   if (!Array.isArray(st.extra)) st.extra = [];
+
+  if (!("menuHintBootId" in st)) st.menuHintBootId = null;
 
   return st;
 }
@@ -193,12 +207,12 @@ function getActiveDuty() {
   return DB.duty.active;
 }
 
-// ===================== Boot reset helpers (NEW) =====================
+// ===================== Boot reset helpers =====================
 function resetChecksForUser(uid) {
   const st = getUserState(uid);
   st.baseDone = BASE_ITEMS.map(() => false);
   for (const it of st.extra) it.done = false;
-  st.removeMode = false; // UX: avoid being stuck in remove mode after restart
+  st.removeMode = false;
   saveData(DB);
 }
 
@@ -280,15 +294,11 @@ function minutesSinceSgt(h, m, targetH, targetM) {
 function shouldSendMorningPollNow() {
   if (!SEND_MORNING_POLL) return false;
 
-  // If you explicitly label the run, keep honoring it
-  if (RUN_KIND === "morning") return true;
-
-  // Otherwise, fallback to "around 0600 SGT" window
   const { hour, minute } = nowSgtParts();
   const deltaMin = minutesSinceSgt(hour, minute, MORNING_POLL_SGT_HOUR, MORNING_POLL_SGT_MINUTE);
 
-  // deltaMin in [0, window] means it is between 06:00 and 06:00+window
-  return deltaMin >= 0 && deltaMin <= MORNING_POLL_WINDOW_MINUTES;
+  // Send only within [06:00, 07:00) SGT
+  return deltaMin >= 0 && deltaMin < MORNING_POLL_WINDOW_MINUTES;
 }
 
 function alreadySentMorningPollToday() {
@@ -304,17 +314,26 @@ function markMorningPollSentToday() {
   saveData(DB);
 }
 
+// DM hint: remind user /menu exists (once per boot)
+async function sendMenuHintOncePerBoot(uid) {
+  const st = getUserState(uid);
+  if (st.menuHintBootId === BOOT_ID) return;
+
+  await bot.sendMessage(
+    uid,
+    "If your checklist buttons are missing or unresponsive, send /menu to restore the checklist menu."
+  );
+
+  st.menuHintBootId = BOOT_ID;
+  saveData(DB);
+}
+
 // ===================== Help text =====================
 function helpText(isDm) {
   const scope = isDm ? "DM checklist" : "Group chat";
   const allowNote = ADD_REQUIRE_ALLOWLIST
     ? "Adding/removing EXTRA tasks is restricted: only /allow-listed users (or group admins) may add/remove."
     : "Allowlist enforcement is OFF: anyone can add/remove EXTRA tasks in DM.";
-
-  const bootNote = [
-    `RESET_CHECKS_ON_BOOT=${RESET_CHECKS_ON_BOOT}`,
-    `CLEAR_ACTIVE_DUTY_ON_BOOT=${CLEAR_ACTIVE_DUTY_ON_BOOT}`,
-  ].join(", ");
 
   return [
     `<b>Checklist Bot — Help</b>`,
@@ -346,14 +365,14 @@ function helpText(isDm) {
     `• /whoallowed — list allowlisted users`,
     ``,
     `<b>Automation</b>`,
-    `• Morning poll: sends when RUN_KIND="morning" OR within ${MORNING_POLL_WINDOW_MINUTES} minutes after ${String(MORNING_POLL_SGT_HOUR).padStart(2, "0")}:${String(MORNING_POLL_SGT_MINUTE).padStart(2, "0")} SGT (once per SGT day).`,
+    `• Morning poll: sends within ${MORNING_POLL_WINDOW_MINUTES} minutes after ${String(MORNING_POLL_SGT_HOUR).padStart(
+      2,
+      "0"
+    )}:${String(MORNING_POLL_SGT_MINUTE).padStart(2, "0")} SGT (once per SGT day).`,
     `• Run reminders: 30/45/50 min — posts checklist status to group and DM duty user.`,
     ``,
     `<b>Allowlist policy</b>`,
     `• ${allowNote}`,
-    ``,
-    `<b>Boot semantics</b>`,
-    `• ${escapeHtml(bootNote)}`,
   ].join("\n");
 }
 
@@ -438,16 +457,16 @@ function buildDmReplyKeyboard(uid) {
 }
 
 async function sendDmChecklist(uid) {
+  // DM-only reminder (once per boot) that /menu exists
+  try {
+    await sendMenuHintOncePerBoot(uid);
+  } catch {
+    // non-fatal
+  }
+
   await bot.sendMessage(uid, formatChecklist(uid), {
     parse_mode: "HTML",
     ...buildDmReplyKeyboard(uid),
-  });
-
-  // Inline fallback in case Telegram hides reply keyboard (esp. mobile)
-  await bot.sendMessage(uid, "If your menu is missing, tap below to restore it:", {
-    reply_markup: {
-      inline_keyboard: [[{ text: "🔧 Restore menu", callback_data: "restore_menu" }]],
-    },
   });
 }
 
@@ -487,12 +506,22 @@ async function sendMorningPollToGroup() {
 
 async function announceAwakeToGroup() {
   if (!GROUP_CHAT_ID) return;
-  await bot.sendMessage(GROUP_CHAT_ID, "👋 Bot awake");
+  await bot.sendMessage(
+    GROUP_CHAT_ID,
+    ["🟢 <b>COS Checklist Bot Online</b>", "Use <b>Start Duty</b> to open your checklist in DM."].join("\n"),
+    { parse_mode: "HTML" }
+  );
 }
 
 async function announceSleepWarningToGroup() {
   if (!GROUP_CHAT_ID) return;
-  await bot.sendMessage(GROUP_CHAT_ID, "😴 Bot is going to sleep soon.");
+  await bot.sendMessage(
+    GROUP_CHAT_ID,
+    ["🟠 <b>COS Checklist Bot Standby</b>", "Bot will go offline soon. Ensure your checklist is up to date."].join(
+      "\n"
+    ),
+    { parse_mode: "HTML" }
+  );
 }
 
 async function announceSleepSummaryToGroup() {
@@ -548,7 +577,6 @@ function scheduleRunReminders() {
   const marks = [30, 45, 50];
   for (const m of marks) {
     if (DURATION_MINUTES > 0 && m >= DURATION_MINUTES) continue;
-
     setTimeout(() => {
       sendRunReminder(m).catch((e) => console.error("sendRunReminder error:", e?.response?.body || e));
     }, m * 60 * 1000);
@@ -694,17 +722,6 @@ bot.on("callback_query", async (q) => {
 
   if (!fromId) return;
 
-  if (data === "restore_menu") {
-    try {
-      await bot.sendMessage(fromId, "Restoring menu…");
-      await sendDmChecklist(fromId);
-      await bot.sendMessage(fromId, "Menu restored.");
-    } catch (e) {
-      console.error("restore_menu error:", e?.response?.body || e);
-    }
-    return;
-  }
-
   if (data === "start_duty") {
     const groupId = GROUP_CHAT_ID ? String(GROUP_CHAT_ID) : msg ? String(msg.chat.id) : null;
     if (!groupId) return;
@@ -810,7 +827,8 @@ bot.on("message", async (msg) => {
     return;
   }
 
-  const mm = msg.text.match(/#(\d+)/);
+  // Safer: only treat presses that match our button format (✅ #n: ... or ⬜️ #n: ...)
+  const mm = msg.text.match(/^(?:✅|⬜️)\s+#(\d+)\b/);
   if (mm) {
     const n = parseInt(mm[1], 10);
     const idx0 = n - 1;
@@ -843,6 +861,7 @@ bot.on("message", async (msg) => {
     }
   }
 
+  // Auto-add EXTRA task if user has authority
   const t = msg.text.trim();
   if (t) {
     if (!(await canUserModifyExtras(uid))) {
@@ -856,20 +875,17 @@ bot.on("message", async (msg) => {
 });
 
 // ===================== Startup / Shutdown =====================
-process.on("unhandledRejection", (e) => console.error("unhandledRejection:", e?.response?.body || e));
-process.on("uncaughtException", (e) => console.error("uncaughtException:", e?.response?.body || e));
-
-const HEARTBEAT = setInterval(() => {
-  if (VERBOSE) console.log("…heartbeat");
-}, 10_000);
+process.on("unhandledRejection", (e) =>
+  console.error("unhandledRejection:", e?.response?.body || e)
+);
+process.on("uncaughtException", (e) =>
+  console.error("uncaughtException:", e?.response?.body || e)
+);
 
 async function gracefulShutdown(reason) {
   try {
     if (VERBOSE) console.log("Shutdown:", reason);
     await announceSleepSummaryToGroup();
-  } catch {}
-  try {
-    clearInterval(HEARTBEAT);
   } catch {}
   process.exit(0);
 }
@@ -886,7 +902,7 @@ async function gracefulShutdown(reason) {
     // Ensure DB schema exists before boot actions
     ensureRoot();
 
-    // NEW: Boot reset semantics (run before webhook clear / polling / announcements)
+    // Boot reset semantics
     if (CLEAR_ACTIVE_DUTY_ON_BOOT) {
       clearActiveDuty();
       if (VERBOSE) console.log("Boot: active duty cleared.");
@@ -913,24 +929,17 @@ async function gracefulShutdown(reason) {
       await announceAwakeToGroup();
       await sendStartDutyPromptToGroup();
 
-      // Morning poll logic:
-      // - send if (RUN_KIND==="morning") OR if within window after 06:00 SGT
-      // - but only once per SGT day (persisted)
       if (shouldSendMorningPollNow() && !alreadySentMorningPollToday()) {
         if (VERBOSE) {
           const p = nowSgtParts();
-          console.log(
-            `Morning poll sending: shouldSend=${shouldSendMorningPollNow()} alreadySentToday=${alreadySentMorningPollToday()} (SGT ${String(
-              p.hour
-            ).padStart(2, "0")}:${String(p.minute).padStart(2, "0")})`
-          );
+          console.log(`Morning poll sending (SGT ${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")})`);
         }
         await sendMorningPollToGroup();
         markMorningPollSentToday();
       } else if (VERBOSE) {
         const p = nowSgtParts();
         console.log(
-          `Morning poll NOT sent. shouldSend=${shouldSendMorningPollNow()} alreadySentToday=${alreadySentMorningPollToday()} (RUN_KIND=${RUN_KIND}, SEND_MORNING_POLL=${SEND_MORNING_POLL}, SGT ${String(
+          `Morning poll NOT sent. shouldSend=${shouldSendMorningPollNow()} alreadySentToday=${alreadySentMorningPollToday()} (SGT ${String(
             p.hour
           ).padStart(2, "0")}:${String(p.minute).padStart(2, "0")})`
         );
