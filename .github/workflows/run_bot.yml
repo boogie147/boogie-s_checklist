@@ -82,7 +82,7 @@ jobs:
           if [[ -n "${{ github.event.schedule }}" ]]; then
             CRON="${{ github.event.schedule }}"
 
-            if [[ "$CRON" == "0 7 * * 0-4" ]]; then
+            if [[ "$CRON" == "32 7 * * 0-4" ]]; then
               # 06:00 SGT run
               DURATION="240"
               SEND_POLL="true"
