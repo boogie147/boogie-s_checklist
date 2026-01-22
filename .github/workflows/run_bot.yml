@@ -121,7 +121,7 @@ jobs:
           SLEEP_WARNING_SECONDS: "60"
 
           # FIXED: these are the env vars your checklist.js actually reads
-          SEND_MORNING_POLL: ${{ steps.decide.outputs.send_poll }}
+          SEND_MORNING_POLL: "true"
           RUN_KIND: ${{ steps.decide.outputs.run_kind }}
 
           # Optional (recommended) boot semantics — only effective if you add the matching env reads in checklist.js
