@@ -35,7 +35,7 @@ concurrency:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 480
+    timeout-minutes: 60
     permissions:
       contents: write
 
@@ -84,17 +84,17 @@ jobs:
 
             if [[ "$CRON" == "0 22 * * 0-4" ]]; then
               # 06:00 SGT run
-              DURATION="240"
+              DURATION="60"
               SEND_POLL="true"
               RUN_KIND="morning"
             elif [[ "$CRON" == "0 1 * * 1-5" ]]; then
               # 09:00 SGT run
-              DURATION="420"
+              DURATION="60"
               SEND_POLL="false"
               RUN_KIND="noon"
             elif [[ "$CRON" == "10 8 * * 1-5" ]]; then
               # 16:10 SGT run
-              DURATION="90"
+              DURATION="60"
               SEND_POLL="false"
               RUN_KIND="afternoon"
             else
