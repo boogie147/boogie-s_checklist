@@ -876,6 +876,7 @@ bot.on("message", async (msg) => {
 });
 
 // ===================== Startup / Shutdown =====================
+console.log("PollEnv:", { SEND_MORNING_POLL });
 process.on("unhandledRejection", (e) =>
   console.error("unhandledRejection:", e?.response?.body || e)
 );
