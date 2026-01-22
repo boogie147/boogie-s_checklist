@@ -116,7 +116,7 @@ jobs:
 
           # Bot runtime behavior
           DROP_PENDING: "true"
-          VERBOSE: ${{ github.event.inputs.verbose || 'false' }}
+          VERBOSE: "true"
           DURATION_MINUTES: ${{ steps.decide.outputs.duration }}
           SLEEP_WARNING_SECONDS: "60"
 
