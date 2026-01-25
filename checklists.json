@@ -120,9 +120,9 @@
   },
   "duty": {
     "active": {
-      "userId": 6149242922,
+      "userId": 686917503,
       "groupChatId": "-1002768068819",
-      "sinceIso": "2026-01-22T22:26:54.496Z"
+      "sinceIso": "2026-01-25T22:34:25.501Z"
     }
   },
   "users": {
@@ -140,6 +140,22 @@
         false
       ],
       "extra": []
+    },
+    "686917503": {
+      "compact": false,
+      "removeMode": false,
+      "baseDone": [
+        true,
+        true,
+        false,
+        false,
+        true,
+        true,
+        false,
+        false
+      ],
+      "extra": [],
+      "menuHintBootId": "2026-01-25T22:23:03.037Z"
     },
     "6171407541": {
       "compact": false,
