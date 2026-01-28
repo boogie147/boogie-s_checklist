@@ -86,7 +86,7 @@
   "meta": {
     "version": 2,
     "lastDutyPromptMessageId": 1489,
-    "lastMorningPollDateSgt": null
+    "lastMorningPollDateSgt": "2026-01-29"
   },
   "group": {
     "-1002768068819": {
@@ -119,7 +119,11 @@
     }
   },
   "duty": {
-    "active": null
+    "active": {
+      "userId": 6149242922,
+      "groupChatId": "-1002768068819",
+      "sinceIso": "2026-01-28T22:18:58.696Z"
+    }
   },
   "users": {
     "487942556": {
@@ -191,16 +195,16 @@
       "removeMode": false,
       "baseDone": [
         true,
-        true,
-        true,
-        true,
-        true,
-        true,
-        true,
-        true
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false
       ],
       "extra": [],
-      "menuHintBootId": "2026-01-28T08:47:43.791Z"
+      "menuHintBootId": "2026-01-28T22:15:45.220Z"
     },
     "7627172388": {
       "compact": false,
