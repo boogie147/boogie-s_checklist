@@ -922,7 +922,7 @@ async function gracefulShutdown(reason) {
     }
 
     await bot.startPolling({
-      interval: 300,
+      interval: 2000,
       params: { timeout: 50, allowed_updates: ["message", "callback_query"] },
     });
     console.log("📡 Polling started.");
