@@ -6,7 +6,7 @@ on:
     - cron: "0 22 * * 0-4"
     # 09:00 SGT Mon–Fri  (SGT UTC+8 => 01:00 UTC Mon–Fri)
     - cron: "0 1 * * 1-5"
-    # 16:10 SGT Mon–Fri  (SGT UTC+8 => 07:00 UTC Mon–Fri)
+    # 16:10 SGT Mon–Fri  (SGT UTC+8 => 08:10 UTC Mon–Fri)
     - cron: "10 8 * * 1-4"
 
   workflow_dispatch:
@@ -35,7 +35,7 @@ concurrency:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     permissions:
       contents: write
 
