@@ -125,8 +125,8 @@ jobs:
           RUN_KIND: ${{ steps.decide.outputs.run_kind }}
 
           # Optional (recommended) boot semantics — only effective if you add the matching env reads in checklist.js
-          # RESET_CHECKS_ON_BOOT: "true"
-          # CLEAR_ACTIVE_DUTY_ON_BOOT: "true"
+          RESET_CHECKS_ON_BOOT: "true"
+          CLEAR_ACTIVE_DUTY_ON_BOOT: "true"
 
         run: node checklist.js
 
