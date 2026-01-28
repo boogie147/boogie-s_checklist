@@ -47,7 +47,7 @@ const ADD_REQUIRE_ALLOWLIST = String(process.env.ADD_REQUIRE_ALLOWLIST || "true"
 const SEND_MORNING_POLL = String(process.env.SEND_MORNING_POLL || "true") === "true";
 
 // Morning poll timing (SGT, fixed 06:00 with 60-min tolerance)
-const MORNING_POLL_SGT_HOUR = Number(process.env.MORNING_POLL_SGT_HOUR || 15);
+const MORNING_POLL_SGT_HOUR = Number(process.env.MORNING_POLL_SGT_HOUR || 6);
 const MORNING_POLL_SGT_MINUTE = Number(process.env.MORNING_POLL_SGT_MINUTE || 0);
 const MORNING_POLL_WINDOW_MINUTES = Number(process.env.MORNING_POLL_WINDOW_MINUTES || 60);
 
