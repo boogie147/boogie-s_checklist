@@ -537,7 +537,6 @@ async function announceOfflineStatusToGroup(reason) {
       [
         "🔴 <b>COS Checklist Bot Offline</b>",
         "No active duty user recorded.",
-        reason ? `<i>Reason:</i> ${escapeHtml(reason)}` : "",
       ].filter(Boolean).join("\n"),
       { parse_mode: "HTML" }
     );
@@ -553,7 +552,6 @@ async function announceOfflineStatusToGroup(reason) {
       "🔴 <b>COS Checklist Bot Offline</b>",
       `<b>Final status</b>: ${escapeHtml(name)} — ${escapeHtml(status)}`,
       "Bot is now offline. Next run will post <b>Start Duty</b> again.",
-      reason ? `<i>Reason:</i> ${escapeHtml(reason)}` : "",
     ].filter(Boolean).join("\n"),
     { parse_mode: "HTML" }
   );
