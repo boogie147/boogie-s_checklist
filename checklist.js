@@ -525,19 +525,37 @@ async function announceSleepWarningToGroup() {
   );
 }
 
-async function announceSleepSummaryToGroup() {
+async function announceOfflineStatusToGroup(reason) {
   if (!GROUP_CHAT_ID) return;
 
   const active = getActiveDuty();
+
+  // If no active duty user, still announce offline
   if (!active || String(active.groupChatId) !== String(GROUP_CHAT_ID)) {
-    await bot.sendMessage(GROUP_CHAT_ID, "😴 Bot is going to sleep. No duty user was active.");
+    await bot.sendMessage(
+      GROUP_CHAT_ID,
+      [
+        "🔴 <b>COS Checklist Bot Offline</b>",
+        "No active duty user recorded.",
+        reason ? `<i>Reason:</i> ${escapeHtml(reason)}` : "",
+      ].filter(Boolean).join("\n"),
+      { parse_mode: "HTML" }
+    );
     return;
   }
 
   const name = await safeGetChatMemberName(GROUP_CHAT_ID, active.userId);
+  const status = formatStatusLine(active.userId);
+
   await bot.sendMessage(
     GROUP_CHAT_ID,
-    `😴 Bot is going to sleep.\nDuty user: ${name} — ${formatStatusLine(active.userId)}.`
+    [
+      "🔴 <b>COS Checklist Bot Offline</b>",
+      `<b>Final status</b>: ${escapeHtml(name)} — ${escapeHtml(status)}`,
+      "Bot is now offline. Next run will post <b>Start Duty</b> again.",
+      reason ? `<i>Reason:</i> ${escapeHtml(reason)}` : "",
+    ].filter(Boolean).join("\n"),
+    { parse_mode: "HTML" }
   );
 }
 
@@ -887,10 +905,14 @@ process.on("uncaughtException", (e) =>
 async function gracefulShutdown(reason) {
   try {
     if (VERBOSE) console.log("Shutdown:", reason);
-    await announceSleepSummaryToGroup();
+
+    // One combined final status + offline announcement
+    await announceOfflineStatusToGroup(reason);
   } catch {}
+
   process.exit(0);
 }
+
 
 (async function main() {
   try {
