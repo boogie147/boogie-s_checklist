@@ -989,9 +989,24 @@ async function gracefulShutdown(reason) {
       console.log("🟢 Auto-stop disabled (DURATION_MINUTES=0).");
     }
   } catch (e) {
-    console.error("❌ Fatal startup error:", e?.response?.body || e);
-    process.exit(1);
+  const body = e?.response?.body;
+  const msg = e?.message || String(e);
+
+  console.error("❌ Fatal startup error:", msg);
+
+  if (e?.errors && Array.isArray(e.errors)) {
+    console.error("Inner errors:");
+    for (const err of e.errors) {
+      console.error(" -", err?.code || "", err?.message || String(err));
+    }
   }
+
+  if (body) console.error("Telegram response body:", body);
+  if (VERBOSE) console.error("Full error object:", e);
+
+  process.exit(1);
+  }
+
 })();
 
 process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
