@@ -119,7 +119,11 @@
     }
   },
   "duty": {
-    "active": null
+    "active": {
+      "userId": 6171407541,
+      "groupChatId": "-1002768068819",
+      "sinceIso": "2026-02-06T03:34:13.373Z"
+    }
   },
   "users": {
     "487942556": {
@@ -172,24 +176,19 @@
     },
     "6171407541": {
       "compact": false,
-      "removeMode": false,
+      "removeMode": true,
       "baseDone": [
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
       ],
-      "extra": [
-        {
-          "text": "Test",
-          "done": false
-        }
-      ],
-      "menuHintBootId": "2026-02-05T05:41:16.211Z"
+      "extra": [],
+      "menuHintBootId": "2026-02-06T03:27:24.721Z"
     },
     "6149242922": {
       "compact": false,
