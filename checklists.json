@@ -122,7 +122,7 @@
     "active": {
       "userId": 1383789229,
       "groupChatId": "-1002768068819",
-      "sinceIso": "2026-02-11T03:46:47.496Z"
+      "sinceIso": "2026-02-11T09:47:02.576Z"
     }
   },
   "users": {
@@ -166,13 +166,13 @@
         true,
         true,
         true,
-        false,
         true,
-        false,
-        false
+        true,
+        true,
+        true
       ],
       "extra": [],
-      "menuHintBootId": "2026-02-11T03:44:15.515Z"
+      "menuHintBootId": "2026-02-11T09:01:43.260Z"
     },
     "1739818244": {
       "compact": false,
