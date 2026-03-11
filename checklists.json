@@ -192,7 +192,7 @@
     },
     "6171407541": {
       "compact": false,
-      "removeMode": false,
+      "removeMode": true,
       "baseDone": [
         false,
         false,
@@ -203,8 +203,10 @@
         false,
         false
       ],
-      "menuHintBootId": "2026-03-11T04:28:17.476Z",
-      "extraDone": []
+      "menuHintBootId": "2026-03-11T05:19:30.404Z",
+      "extraDone": [
+        false
+      ]
     },
     "6149242922": {
       "compact": false,
@@ -259,7 +261,7 @@
     },
     "5312709437": {
       "compact": false,
-      "removeMode": true,
+      "removeMode": false,
       "baseDone": [
         false,
         false,
@@ -270,9 +272,7 @@
         false,
         false
       ],
-      "extraDone": [
-        false
-      ],
+      "extraDone": [],
       "menuHintBootId": "2026-03-11T05:13:41.038Z"
     }
   },
@@ -284,7 +284,7 @@
   },
   "sharedExtra": [
     {
-      "text": "type 2"
+      "text": "Nigger"
     }
   ]
 }
