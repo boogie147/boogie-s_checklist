@@ -194,16 +194,16 @@
       "compact": false,
       "removeMode": false,
       "baseDone": [
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
       ],
-      "menuHintBootId": "2026-03-11T05:19:30.404Z",
+      "menuHintBootId": "2026-03-11T05:46:08.673Z",
       "extraDone": []
     },
     "6149242922": {
@@ -259,7 +259,7 @@
     },
     "5312709437": {
       "compact": false,
-      "removeMode": true,
+      "removeMode": false,
       "baseDone": [
         false,
         false,
@@ -276,8 +276,7 @@
   },
   "allow": {
     "-1002768068819": [
-      487942556,
-      5312709437
+      487942556
     ]
   },
   "sharedExtra": []
