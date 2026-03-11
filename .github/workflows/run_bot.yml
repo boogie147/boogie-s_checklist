@@ -1,6 +1,6 @@
 name: Run Telegram Checklist Bot
 
-#on:
+on:
   #schedule:
     # 06:00 SGT Mon–Fri  (SGT UTC+8 => 22:00 UTC previous day, Sun–Thu)
     #- cron: "0 22 * * 0-4"
