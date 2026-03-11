@@ -119,11 +119,7 @@
     }
   },
   "duty": {
-    "active": {
-      "userId": 6171407541,
-      "groupChatId": "-1002768068819",
-      "sinceIso": "2026-03-11T04:28:20.369Z"
-    }
+    "active": null
   },
   "users": {
     "487942556": {
@@ -140,7 +136,8 @@
         false
       ],
       "extra": [],
-      "menuHintBootId": null
+      "menuHintBootId": null,
+      "extraDone": []
     },
     "686917503": {
       "compact": true,
@@ -156,7 +153,8 @@
         false
       ],
       "extra": [],
-      "menuHintBootId": "2026-02-04T08:56:14.032Z"
+      "menuHintBootId": "2026-02-04T08:56:14.032Z",
+      "extraDone": []
     },
     "1383789229": {
       "compact": false,
@@ -172,7 +170,8 @@
         false
       ],
       "extra": [],
-      "menuHintBootId": "2026-02-13T03:36:47.090Z"
+      "menuHintBootId": "2026-02-13T03:36:47.090Z",
+      "extraDone": []
     },
     "1739818244": {
       "compact": false,
@@ -188,7 +187,8 @@
         false
       ],
       "extra": [],
-      "menuHintBootId": "2026-02-12T23:51:52.087Z"
+      "menuHintBootId": "2026-02-12T23:51:52.087Z",
+      "extraDone": []
     },
     "6171407541": {
       "compact": false,
@@ -203,13 +203,8 @@
         false,
         false
       ],
-      "extra": [
-        {
-          "text": "test",
-          "done": false
-        }
-      ],
-      "menuHintBootId": "2026-03-11T04:28:17.476Z"
+      "menuHintBootId": "2026-03-11T04:28:17.476Z",
+      "extraDone": []
     },
     "6149242922": {
       "compact": false,
@@ -225,7 +220,8 @@
         false
       ],
       "extra": [],
-      "menuHintBootId": "2026-02-03T09:17:00.390Z"
+      "menuHintBootId": "2026-02-03T09:17:00.390Z",
+      "extraDone": []
     },
     "7627172388": {
       "compact": false,
@@ -241,7 +237,8 @@
         false
       ],
       "extra": [],
-      "menuHintBootId": "2026-02-09T09:05:49.423Z"
+      "menuHintBootId": "2026-02-09T09:05:49.423Z",
+      "extraDone": []
     },
     "7606867599": {
       "compact": false,
@@ -257,12 +254,37 @@
         false
       ],
       "extra": [],
-      "menuHintBootId": "2026-02-05T22:15:19.008Z"
+      "menuHintBootId": "2026-02-05T22:15:19.008Z",
+      "extraDone": []
+    },
+    "5312709437": {
+      "compact": false,
+      "removeMode": true,
+      "baseDone": [
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false
+      ],
+      "extraDone": [
+        false
+      ],
+      "menuHintBootId": "2026-03-11T05:13:41.038Z"
     }
   },
   "allow": {
     "-1002768068819": [
-      487942556
+      487942556,
+      5312709437
     ]
-  }
+  },
+  "sharedExtra": [
+    {
+      "text": "type 2"
+    }
+  ]
 }
