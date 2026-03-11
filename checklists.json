@@ -156,6 +156,22 @@
       "menuHintBootId": "2026-02-04T08:56:14.032Z",
       "extraDone": []
     },
+    "1180867285": {
+      "compact": false,
+      "removeMode": true,
+      "baseDone": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "extraDone": [],
+      "menuHintBootId": "2026-03-11T05:55:26.810Z"
+    },
     "1383789229": {
       "compact": false,
       "removeMode": false,
@@ -194,14 +210,14 @@
       "compact": false,
       "removeMode": false,
       "baseDone": [
-        true,
-        true,
-        true,
-        true,
-        true,
-        true,
-        true,
-        true
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false
       ],
       "menuHintBootId": "2026-03-11T05:46:08.673Z",
       "extraDone": []
@@ -276,7 +292,8 @@
   },
   "allow": {
     "-1002768068819": [
-      487942556
+      487942556,
+      1180867285
     ]
   },
   "sharedExtra": []
