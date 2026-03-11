@@ -657,7 +657,7 @@ async function sendRunReminder(minMark) {
 }
 
 function scheduleRunReminders() {
-  const marks = [30, 45, 50];
+  const marks = [0, 1, 2];
   for (const m of marks) {
     if (DURATION_MINUTES > 0 && m >= DURATION_MINUTES) continue;
 
