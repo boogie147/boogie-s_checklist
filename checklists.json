@@ -207,19 +207,19 @@
       "extraDone": []
     },
     "6171407541": {
-      "compact": false,
+      "compact": true,
       "removeMode": false,
       "baseDone": [
-        false,
-        false,
-        false,
-        false,
-        false,
+        true,
+        true,
+        true,
+        true,
+        true,
         false,
         false,
         false
       ],
-      "menuHintBootId": "2026-03-11T05:46:08.673Z",
+      "menuHintBootId": "2026-03-18T06:34:22.581Z",
       "extraDone": []
     },
     "6149242922": {
