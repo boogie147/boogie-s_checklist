@@ -121,7 +121,7 @@ jobs:
           RESET_CHECKS_ON_BOOT: "true"
           CLEAR_ACTIVE_DUTY_ON_BOOT: "true"
 
-        run: node checklist.js
+      
         run: node bot.js
 
       - name: Commit & push updated checklists.json
