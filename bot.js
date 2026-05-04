@@ -1,5 +1,6 @@
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
+const { enterCOS, handleCOSMessage } = require('./services/cos');
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const CHAT_ID = process.env.CHAT_ID;
@@ -82,20 +83,6 @@ function mainMenuKeyboard() {
   };
 }
 
-function cosMenuKeyboard() {
-  return {
-    reply_markup: {
-      keyboard: [
-        ['COS Option 1', 'COS Option 2'],
-        ['COS Help'],
-        ['Back to Main Menu']
-      ],
-      resize_keyboard: true,
-      one_time_keyboard: false
-    }
-  };
-}
-
 function mcMenuKeyboard() {
   return {
     reply_markup: {
@@ -166,58 +153,7 @@ async function sendAbout(chatId) {
   await bot.sendMessage(chatId, text);
 }
 
-/**
- * =========================================================
- * COS SERVICE
- * =========================================================
- */
-async function enterCOS(chatId) {
-  setUserState(chatId, {
-    menu: 'SERVICE',
-    service: 'COS'
-  });
 
-  const text =
-    `You are now in COS service.\n\n` +
-    `Please choose an option.`;
-
-  await bot.sendMessage(chatId, text, cosMenuKeyboard());
-}
-
-async function handleCOSMessage(chatId, text) {
-  switch (text) {
-    case 'COS Option 1':
-      await bot.sendMessage(
-        chatId,
-        `COS Option 1 selected.\n\nReplace this with your actual COS workflow.`
-      );
-      break;
-
-    case 'COS Option 2':
-      await bot.sendMessage(
-        chatId,
-        `COS Option 2 selected.\n\nReplace this with your actual COS workflow.`
-      );
-      break;
-
-    case 'COS Help':
-      await bot.sendMessage(
-        chatId,
-        `COS Help:\n` +
-          `- COS Option 1\n` +
-          `- COS Option 2\n\n` +
-          `Select an option from the keyboard.`
-      );
-      break;
-
-    default:
-      await bot.sendMessage(
-        chatId,
-        `Invalid COS option. Please use the COS menu buttons.`
-      );
-      break;
-  }
-}
 
 /**
  * =========================================================
