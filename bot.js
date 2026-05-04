@@ -2,6 +2,7 @@ require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
+const CHAT_ID = process.env.CHAT_ID;
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN is missing in environment variables.');
@@ -107,6 +108,23 @@ function mcMenuKeyboard() {
       one_time_keyboard: false
     }
   };
+}
+
+async function sendStartupGreeting() {
+  if (!CHAT_ID) {
+    console.log('ℹ️ CHAT_ID not set. Skipping startup greeting.');
+    return;
+  }
+
+  try {
+    await bot.sendMessage(
+      CHAT_ID,
+      `✅ Bot is now online.\n\nPlease use /start to begin.`
+    );
+    console.log('✅ Startup greeting sent.');
+  } catch (err) {
+    console.error('❌ Failed to send startup greeting:', err.message || err);
+  }
 }
 
 /**
@@ -373,4 +391,7 @@ bot.on('polling_error', (err) => {
   console.error('❌ Polling error:', err?.message || err);
 });
 
-console.log('✅ Menu bot is running...');
+(async () => {
+  console.log('✅ Menu bot is running...');
+  await sendStartupGreeting();
+})();
