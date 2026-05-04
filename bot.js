@@ -215,8 +215,8 @@ async function handleMCMessage(chatId, text) {
  */
 const serviceHandlers = {
   COS: {
-    enter: enterCOS,
-    handle: handleCOSMessage
+    enter: (chatId) => enterCOS(bot, chatId, setUserState),
+    handle: (chatId, text) => handleCOSMessage(bot, chatId, text)
   },
   MC: {
     enter: enterMC,
