@@ -220,8 +220,8 @@ function addSharedExtraTask(text) {
   normalizeSharedExtra();
 
   const clean = String(text || '').trim();
-  if (!clean) return false;
-  if (DB.sharedExtra.some((x) => x.text === clean)) return false;
+  if (!clean) return { ok: false, reason: 'empty' };
+  if (DB.sharedExtra.some((x) => x.text === clean)) return { ok: false, reason: 'duplicate' };
 
   DB.sharedExtra.push({ text: clean });
 
@@ -231,15 +231,16 @@ function addSharedExtraTask(text) {
   }
 
   saveData(DB);
-  return true;
+  return { ok: true, text: clean };
 }
 
 function removeSharedExtraTaskAt(extraIndex) {
   ensureRoot();
   normalizeSharedExtra();
 
-  if (extraIndex < 0 || extraIndex >= DB.sharedExtra.length) return false;
+  if (extraIndex < 0 || extraIndex >= DB.sharedExtra.length) return { ok: false, reason: 'range' };
 
+  const removed = DB.sharedExtra[extraIndex]?.text || null;
   DB.sharedExtra.splice(extraIndex, 1);
 
   for (const uid of Object.keys(DB.users)) {
@@ -252,7 +253,7 @@ function removeSharedExtraTaskAt(extraIndex) {
   }
 
   saveData(DB);
-  return true;
+  return { ok: true, text: removed };
 }
 
 function resetChecksForUser(uid) {
@@ -428,7 +429,6 @@ function formatChecklist(uid) {
     : [];
 
   const allLines = baseLines.concat(extraLines);
-
   const { total, doneCount, complete } = checklistStats(uid);
 
   const headerLines = [
@@ -495,22 +495,30 @@ function buildInlineKeyboard(uid) {
 async function sendOrUpdateChecklist(uid) {
   const st = getUserState(uid);
   const text = formatChecklist(uid);
-  const replyMarkup = { reply_markup: buildInlineKeyboard(uid), parse_mode: 'HTML' };
+  const options = {
+    chat_id: uid,
+    parse_mode: 'HTML',
+    reply_markup: buildInlineKeyboard(uid),
+  };
 
   if (st.checklistMessageId) {
     try {
       await bot.editMessageText(text, {
-        chat_id: uid,
+        ...options,
         message_id: st.checklistMessageId,
-        ...replyMarkup,
       });
       return;
     } catch (e) {
-      if (VERBOSE) console.warn('editMessageText failed, sending new checklist:', e?.response?.body || e?.message || e);
+      const body = e?.response?.body || {};
+      const desc = body?.description || e?.message || '';
+      if (VERBOSE) console.warn('editMessageText failed:', desc);
     }
   }
 
-  const sent = await bot.sendMessage(uid, text, replyMarkup);
+  const sent = await bot.sendMessage(uid, text, {
+    parse_mode: 'HTML',
+    reply_markup: buildInlineKeyboard(uid),
+  });
   st.checklistMessageId = sent.message_id;
   saveData(DB);
 }
@@ -805,8 +813,7 @@ function registerChecklistHandlers(botInstance, deps = {}) {
 
     if (!data.startsWith('cos:')) return;
 
-    const uid = msg?.chat?.id;
-    if (!uid) return;
+    const uid = fromId;
     if (!isCosActive(uid)) return;
 
     const st = getUserState(uid);
@@ -818,6 +825,7 @@ function registerChecklistHandlers(botInstance, deps = {}) {
 
     if (data === 'cos:clear') {
       resetChecksForUser(uid);
+      await bot.sendMessage(uid, '🧹 Checklist cleared.');
       await sendOrUpdateChecklist(uid);
       return;
     }
@@ -838,7 +846,9 @@ function registerChecklistHandlers(botInstance, deps = {}) {
         return;
       }
       st.removeMode = !st.removeMode;
+      st.awaitingAdd = false;
       saveData(DB);
+      await bot.sendMessage(uid, st.removeMode ? '🗑 Remove mode ON. Tap an extra task to delete it.' : '✅ Remove mode OFF.');
       await sendOrUpdateChecklist(uid);
       return;
     }
@@ -852,8 +862,9 @@ function registerChecklistHandlers(botInstance, deps = {}) {
         return;
       }
       st.awaitingAdd = true;
+      st.removeMode = false;
       saveData(DB);
-      await bot.sendMessage(uid, 'Send me the new GLOBAL extra task text.');
+      await bot.sendMessage(uid, '➕ Send me the new GLOBAL extra task text now.');
       await sendOrUpdateChecklist(uid);
       return;
     }
@@ -887,7 +898,13 @@ function registerChecklistHandlers(botInstance, deps = {}) {
             }).catch(() => {});
             return;
           }
-          removeSharedExtraTaskAt(idx);
+
+          const result = removeSharedExtraTaskAt(idx);
+          if (result.ok) {
+            await bot.sendMessage(uid, `🗑 Removed: ${result.text}`);
+          } else {
+            await bot.sendMessage(uid, '⚠️ Failed to remove task.');
+          }
         } else {
           st.extraDone[idx] = !st.extraDone[idx];
           saveData(DB);
@@ -908,29 +925,33 @@ function registerChecklistHandlers(botInstance, deps = {}) {
     if (!isCosActive(uid)) return;
 
     const st = getUserState(uid);
+    const text = msg.text.trim();
 
-    if (st.awaitingAdd) {
-      if (!(await canUserModifyExtras(uid))) {
-        st.awaitingAdd = false;
-        saveData(DB);
-        await bot.sendMessage(uid, '🚫 You are not allowed to add tasks.');
-        await sendOrUpdateChecklist(uid);
-        return;
-      }
+    if (!st.awaitingAdd) return;
 
-      const added = addSharedExtraTask(msg.text.trim());
+    if (!(await canUserModifyExtras(uid))) {
       st.awaitingAdd = false;
       saveData(DB);
-
-      if (!added) {
-        await bot.sendMessage(uid, 'Task was not added. It may already exist or be invalid.');
-      } else {
-        await bot.sendMessage(uid, '✅ Global extra task added.');
-      }
-
+      await bot.sendMessage(uid, '🚫 You are not allowed to add tasks.');
       await sendOrUpdateChecklist(uid);
       return;
     }
+
+    const result = addSharedExtraTask(text);
+    st.awaitingAdd = false;
+    saveData(DB);
+
+    if (!result.ok) {
+      if (result.reason === 'duplicate') {
+        await bot.sendMessage(uid, '⚠️ Task was not added because it already exists.');
+      } else {
+        await bot.sendMessage(uid, '⚠️ Task was not added because it is empty or invalid.');
+      }
+    } else {
+      await bot.sendMessage(uid, `✅ Added: ${result.text}`);
+    }
+
+    await sendOrUpdateChecklist(uid);
   });
 }
 
