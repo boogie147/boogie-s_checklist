@@ -155,11 +155,10 @@ function getUserState(uid) {
     DB.users[uid] = {
       compact: false,
       removeMode: false,
+      awaitingAdd: false,
       baseDone: BASE_ITEMS.map(() => false),
       extraDone: DB.sharedExtra.map(() => false),
       menuHintBootId: null,
-      awaitingAdd: false,
-      checklistMessageId: null,
     };
     saveData(DB);
   }
@@ -170,7 +169,6 @@ function getUserState(uid) {
   if (typeof st.removeMode !== 'boolean') st.removeMode = false;
   if (typeof st.awaitingAdd !== 'boolean') st.awaitingAdd = false;
   if (!('menuHintBootId' in st)) st.menuHintBootId = null;
-  if (!('checklistMessageId' in st)) st.checklistMessageId = null;
 
   if (!Array.isArray(st.baseDone)) st.baseDone = BASE_ITEMS.map(() => false);
   if (st.baseDone.length !== BASE_ITEMS.length) {
@@ -286,6 +284,8 @@ const escapeHtml = (s) =>
     "'": '&#39;',
   }[m]));
 
+const truncate = (s, n) => (s && s.length > n ? s.slice(0, n - 1) + '…' : s);
+
 async function safeGetChatMemberName(chatId, userId) {
   try {
     const m = await bot.getChatMember(chatId, userId);
@@ -335,8 +335,10 @@ function minutesSinceSgt(h, m, targetH, targetM) {
 
 function shouldSendMorningPollNow() {
   if (!SEND_MORNING_POLL) return false;
+
   const { hour, minute } = nowSgtParts();
   const deltaMin = minutesSinceSgt(hour, minute, MORNING_POLL_SGT_HOUR, MORNING_POLL_SGT_MINUTE);
+
   return deltaMin >= 0 && deltaMin < MORNING_POLL_WINDOW_MINUTES;
 }
 
@@ -359,7 +361,7 @@ async function sendMenuHintOncePerBoot(uid) {
 
   await bot.sendMessage(
     uid,
-    'If your checklist buttons are missing or unresponsive, send /menu to redraw the COS checklist.'
+    'If your checklist buttons are missing, send /menu to restore the COS checklist menu.'
   );
 
   st.menuHintBootId = BOOT_ID;
@@ -377,29 +379,19 @@ function helpText(isDm) {
     ``,
     `<b>Scope</b>: ${scope}`,
     ``,
-    `<b>Core flow</b>`,
-    `• Group: Bot posts <i>Start Duty</i> button whenever it comes online.`,
-    `• Tap <i>Start Duty</i> → Bot DMs you the checklist.`,
-    `• Group receives status reminders and a final offline status.`,
-    ``,
     `<b>DM checklist controls</b>`,
-    `• Tap checklist buttons to toggle ✅/⬜️`,
+    `• Tap item buttons (#1, #2, …) to toggle ✅/⬜️`,
     `• ➕ Add — add GLOBAL EXTRA task`,
-    `• 🧹 Clear — clear your checklist`,
-    `• 🗑 Remove Mode — remove GLOBAL EXTRA tasks only`,
+    `• 🧹 Clear checks — clear your checklist`,
+    `• 🗑 Remove mode — remove GLOBAL EXTRA tasks only`,
+    `• 📋 Compact view / 📝 Full view — switch display`,
     `• 🔄 Refresh — redraw checklist`,
-    `• ↩️ Main Menu — return to main menu bot`,
     ``,
     `<b>Commands</b>`,
     `• /start — start DM session + show checklist`,
     `• /help — show this help`,
-    `• /menu — redraw checklist`,
+    `• /menu — restore checklist menu`,
     `• /clear — clear all your checks`,
-    ``,
-    `<b>Group admin commands</b>`,
-    `• /allow — (reply to a user) allow them to add/remove GLOBAL EXTRA tasks in DM`,
-    `• /deny — (reply to a user) revoke allowance`,
-    `• /whoallowed — list allowlisted users`,
     ``,
     `<b>Allowlist policy</b>`,
     `• ${allowNote}`,
@@ -448,79 +440,65 @@ function formatChecklist(uid) {
   return `${headerLines.join('\n')}\n\n${allLines.join('\n')}`;
 }
 
-function truncate(s, n) {
-  return s && s.length > n ? s.slice(0, n - 1) + '…' : s;
-}
-
-function buildInlineKeyboard(uid) {
+function itemButtonLabel(uid, idx1) {
   const st = getUserState(uid);
-  const rows = [];
+  const idx0 = idx1 - 1;
 
-  rows.push([
-    { text: '🔄 Refresh', callback_data: 'cos:refresh' },
-    { text: '🧹 Clear', callback_data: 'cos:clear' },
-  ]);
-
-  rows.push([
-    { text: '➕ Add', callback_data: 'cos:add' },
-    { text: st.removeMode ? '✅ Remove Mode On' : '🗑 Remove Mode', callback_data: 'cos:remove_mode' },
-  ]);
-
-  rows.push([
-    { text: st.compact ? '📝 Full View' : '📋 Compact View', callback_data: 'cos:compact' },
-    { text: '↩️ Main Menu', callback_data: 'cos:exit' },
-  ]);
-
-  for (let i = 0; i < BASE_ITEMS.length; i++) {
-    rows.push([
-      {
-        text: `${getUserState(uid).baseDone[i] ? '✅' : '⬜️'} #${i + 1}: ${truncate(BASE_ITEMS[i], 38)}`,
-        callback_data: `cos:base:${i}`,
-      },
-    ]);
+  const baseLen = BASE_ITEMS.length;
+  if (idx0 >= 0 && idx0 < baseLen) {
+    const done = !!st.baseDone[idx0];
+    return `${done ? '✅' : '⬜️'} #${idx1}: ${truncate(BASE_ITEMS[idx0], 28)}`;
   }
 
-  for (let j = 0; j < DB.sharedExtra.length; j++) {
-    rows.push([
-      {
-        text: `${getUserState(uid).extraDone[j] ? '✅' : '⬜️'} #${BASE_ITEMS.length + j + 1}: ${truncate(DB.sharedExtra[j].text, 38)}`,
-        callback_data: `cos:extra:${j}`,
-      },
-    ]);
+  const extraIndex = idx0 - baseLen;
+  if (extraIndex >= 0 && extraIndex < DB.sharedExtra.length) {
+    const it = DB.sharedExtra[extraIndex];
+    return `${st.extraDone[extraIndex] ? '✅' : '⬜️'} #${idx1}: ${truncate(it.text, 28)}`;
   }
 
-  return { inline_keyboard: rows };
+  return `#${idx1}`;
 }
 
-async function sendOrUpdateChecklist(uid) {
+function buildDmReplyKeyboard(uid) {
   const st = getUserState(uid);
-  const text = formatChecklist(uid);
-  const options = {
-    chat_id: uid,
-    parse_mode: 'HTML',
-    reply_markup: buildInlineKeyboard(uid),
+  const total = BASE_ITEMS.length + DB.sharedExtra.length;
+
+  const rows = [
+    [{ text: '➕ Add' }, { text: '🔄 Refresh' }],
+    [{ text: st.removeMode ? '✅ Done removing' : '🗑 Remove mode' }, { text: '🧹 Clear checks' }],
+    [{ text: st.compact ? '📝 Full view' : '📋 Compact view' }],
+  ];
+
+  for (let i = 1; i <= total; i++) {
+    rows.push([{ text: itemButtonLabel(uid, i) }]);
+  }
+
+  return {
+    reply_markup: {
+      keyboard: rows,
+      resize_keyboard: true,
+      one_time_keyboard: false,
+      input_field_placeholder: st.awaitingAdd
+        ? 'Type the new task text...'
+        : 'Tap an item to toggle, or use controls…',
+    },
   };
+}
 
-  if (st.checklistMessageId) {
-    try {
-      await bot.editMessageText(text, {
-        ...options,
-        message_id: st.checklistMessageId,
-      });
-      return;
-    } catch (e) {
-      const body = e?.response?.body || {};
-      const desc = body?.description || e?.message || '';
-      if (VERBOSE) console.warn('editMessageText failed:', desc);
-    }
-  }
+async function sendDmChecklist(uid) {
+  try {
+    await sendMenuHintOncePerBoot(uid);
+  } catch {}
 
-  const sent = await bot.sendMessage(uid, text, {
+  await bot.sendMessage(uid, formatChecklist(uid), {
     parse_mode: 'HTML',
-    reply_markup: buildInlineKeyboard(uid),
+    ...buildDmReplyKeyboard(uid),
   });
-  st.checklistMessageId = sent.message_id;
-  saveData(DB);
+}
+
+function formatStatusLine(uid) {
+  const { total, doneCount, complete } = checklistStats(uid);
+  return complete ? `✅ COMPLETE (${doneCount}/${total})` : `⏳ ${doneCount}/${total} done`;
 }
 
 async function sendStartDutyPromptToGroup() {
@@ -530,7 +508,7 @@ async function sendStartDutyPromptToGroup() {
   let line = 'Tap the button to start duty (DM checklist).';
   if (active && String(active.groupChatId) === String(GROUP_CHAT_ID)) {
     const name = await safeGetChatMemberName(GROUP_CHAT_ID, active.userId);
-    line = `Current duty: ${escapeHtml(name)}`;
+    line = `Current duty: ${escapeHtml(name)} — ${formatStatusLine(active.userId)}`;
   }
 
   await bot.sendMessage(GROUP_CHAT_ID, `🧾 <b>Duty Checklist</b>\n${line}`, {
@@ -588,8 +566,7 @@ async function announceOfflineStatusToGroup(reason) {
   }
 
   const name = await safeGetChatMemberName(GROUP_CHAT_ID, active.userId);
-  const { total, doneCount, complete } = checklistStats(active.userId);
-  const status = complete ? `✅ COMPLETE (${doneCount}/${total})` : `⏳ ${doneCount}/${total} done`;
+  const status = formatStatusLine(active.userId);
 
   await bot.sendMessage(
     GROUP_CHAT_ID,
@@ -619,17 +596,15 @@ async function sendRunReminder(minMark) {
   if (GROUP_CHAT_ID && String(active.groupChatId) === String(GROUP_CHAT_ID)) {
     try {
       const name = await safeGetChatMemberName(GROUP_CHAT_ID, dutyUid);
-      const { total, doneCount, complete } = checklistStats(dutyUid);
-      const status = complete ? `✅ COMPLETE (${doneCount}/${total})` : `⏳ ${doneCount}/${total} done`;
-      await bot.sendMessage(GROUP_CHAT_ID, `⏱️ ${minMark} min — Duty: ${name} — ${status}`);
+      await bot.sendMessage(GROUP_CHAT_ID, `⏱️ ${minMark} min — Duty: ${name} — ${formatStatusLine(dutyUid)}`);
     } catch (e) {
       console.error('group reminder error:', e?.response?.body || e);
     }
   }
 
   try {
-    await bot.sendMessage(dutyUid, `⏱️ ${minMark} min reminder — checklist updated below.`);
-    await sendOrUpdateChecklist(dutyUid);
+    await bot.sendMessage(dutyUid, `⏱️ ${minMark} min reminder — your status: ${formatStatusLine(dutyUid)}`);
+    await sendDmChecklist(dutyUid);
   } catch (e) {
     if (VERBOSE) console.warn('dm reminder failed:', e?.response?.body || e);
   }
@@ -671,15 +646,14 @@ function registerChecklistHandlers(botInstance, deps = {}) {
     if (!uid) return;
     await activateCosMode(uid);
     await bot.sendMessage(uid, 'You are now in COS checklist mode.');
-    await sendMenuHintOncePerBoot(uid);
-    await sendOrUpdateChecklist(uid);
+    await sendDmChecklist(uid);
   });
 
   bot.onText(cmdRe('menu'), async (msg) => {
     if (msg.chat.type !== 'private') return;
     const uid = msg.from?.id;
     if (!uid || !isCosActive(uid)) return;
-    await sendOrUpdateChecklist(uid);
+    await sendDmChecklist(uid);
   });
 
   bot.onText(cmdRe('help'), async (msg) => {
@@ -696,7 +670,7 @@ function registerChecklistHandlers(botInstance, deps = {}) {
     const uid = msg.from?.id;
     if (!uid || !isCosActive(uid)) return;
     resetChecksForUser(uid);
-    await sendOrUpdateChecklist(uid);
+    await sendDmChecklist(uid);
   });
 
   bot.onText(cmdRe('allow'), async (msg) => {
@@ -773,7 +747,7 @@ function registerChecklistHandlers(botInstance, deps = {}) {
   });
 
   bot.on('callback_query', async (q) => {
-    const data = q.data || '';
+    const data = q.data;
     const fromId = q.from?.id;
     const msg = q.message;
 
@@ -797,8 +771,7 @@ function registerChecklistHandlers(botInstance, deps = {}) {
 
       try {
         await bot.sendMessage(fromId, 'You are now on duty. Here is your checklist:');
-        await sendMenuHintOncePerBoot(fromId);
-        await sendOrUpdateChecklist(fromId);
+        await sendDmChecklist(fromId);
       } catch (e) {
         try {
           await bot.sendMessage(
@@ -807,109 +780,6 @@ function registerChecklistHandlers(botInstance, deps = {}) {
           );
         } catch {}
         console.error('start_duty DM error:', e?.response?.body || e);
-      }
-      return;
-    }
-
-    if (!data.startsWith('cos:')) return;
-
-    const uid = fromId;
-    if (!isCosActive(uid)) return;
-
-    const st = getUserState(uid);
-
-    if (data === 'cos:refresh') {
-      await sendOrUpdateChecklist(uid);
-      return;
-    }
-
-    if (data === 'cos:clear') {
-      resetChecksForUser(uid);
-      await bot.sendMessage(uid, '🧹 Checklist cleared.');
-      await sendOrUpdateChecklist(uid);
-      return;
-    }
-
-    if (data === 'cos:compact') {
-      st.compact = !st.compact;
-      saveData(DB);
-      await sendOrUpdateChecklist(uid);
-      return;
-    }
-
-    if (data === 'cos:remove_mode') {
-      if (!(await canUserModifyExtras(uid))) {
-        await bot.answerCallbackQuery(q.id, {
-          text: 'Not allowed to remove tasks.',
-          show_alert: true,
-        }).catch(() => {});
-        return;
-      }
-      st.removeMode = !st.removeMode;
-      st.awaitingAdd = false;
-      saveData(DB);
-      await bot.sendMessage(uid, st.removeMode ? '🗑 Remove mode ON. Tap an extra task to delete it.' : '✅ Remove mode OFF.');
-      await sendOrUpdateChecklist(uid);
-      return;
-    }
-
-    if (data === 'cos:add') {
-      if (!(await canUserModifyExtras(uid))) {
-        await bot.answerCallbackQuery(q.id, {
-          text: 'Not allowed to add tasks.',
-          show_alert: true,
-        }).catch(() => {});
-        return;
-      }
-      st.awaitingAdd = true;
-      st.removeMode = false;
-      saveData(DB);
-      await bot.sendMessage(uid, '➕ Send me the new GLOBAL extra task text now.');
-      await sendOrUpdateChecklist(uid);
-      return;
-    }
-
-    if (data === 'cos:exit') {
-      st.awaitingAdd = false;
-      st.removeMode = false;
-      saveData(DB);
-      await exitCosMode(uid);
-      return;
-    }
-
-    if (data.startsWith('cos:base:')) {
-      const idx = Number(data.split(':')[2]);
-      if (!Number.isNaN(idx) && idx >= 0 && idx < BASE_ITEMS.length) {
-        st.baseDone[idx] = !st.baseDone[idx];
-        saveData(DB);
-        await sendOrUpdateChecklist(uid);
-      }
-      return;
-    }
-
-    if (data.startsWith('cos:extra:')) {
-      const idx = Number(data.split(':')[2]);
-      if (!Number.isNaN(idx) && idx >= 0 && idx < DB.sharedExtra.length) {
-        if (st.removeMode) {
-          if (!(await canUserModifyExtras(uid))) {
-            await bot.answerCallbackQuery(q.id, {
-              text: 'Not allowed to remove tasks.',
-              show_alert: true,
-            }).catch(() => {});
-            return;
-          }
-
-          const result = removeSharedExtraTaskAt(idx);
-          if (result.ok) {
-            await bot.sendMessage(uid, `🗑 Removed: ${result.text}`);
-          } else {
-            await bot.sendMessage(uid, '⚠️ Failed to remove task.');
-          }
-        } else {
-          st.extraDone[idx] = !st.extraDone[idx];
-          saveData(DB);
-        }
-        await sendOrUpdateChecklist(uid);
       }
       return;
     }
@@ -925,33 +795,131 @@ function registerChecklistHandlers(botInstance, deps = {}) {
     if (!isCosActive(uid)) return;
 
     const st = getUserState(uid);
-    const text = msg.text.trim();
 
-    if (!st.awaitingAdd) return;
-
-    if (!(await canUserModifyExtras(uid))) {
-      st.awaitingAdd = false;
-      saveData(DB);
-      await bot.sendMessage(uid, '🚫 You are not allowed to add tasks.');
-      await sendOrUpdateChecklist(uid);
+    if (msg.text === '🔄 Refresh') {
+      await sendDmChecklist(uid);
       return;
     }
 
-    const result = addSharedExtraTask(text);
-    st.awaitingAdd = false;
-    saveData(DB);
-
-    if (!result.ok) {
-      if (result.reason === 'duplicate') {
-        await bot.sendMessage(uid, '⚠️ Task was not added because it already exists.');
-      } else {
-        await bot.sendMessage(uid, '⚠️ Task was not added because it is empty or invalid.');
-      }
-    } else {
-      await bot.sendMessage(uid, `✅ Added: ${result.text}`);
+    if (msg.text === '🧹 Clear checks') {
+      resetChecksForUser(uid);
+      await sendDmChecklist(uid);
+      return;
     }
 
-    await sendOrUpdateChecklist(uid);
+    if (msg.text === '📋 Compact view') {
+      st.compact = true;
+      saveData(DB);
+      await sendDmChecklist(uid);
+      return;
+    }
+
+    if (msg.text === '📝 Full view') {
+      st.compact = false;
+      saveData(DB);
+      await sendDmChecklist(uid);
+      return;
+    }
+
+    if (msg.text === '🗑 Remove mode') {
+      if (!(await canUserModifyExtras(uid))) {
+        await bot.sendMessage(uid, '🚫 You are not allowed to remove tasks.');
+        return;
+      }
+      st.removeMode = true;
+      st.awaitingAdd = false;
+      saveData(DB);
+      await bot.sendMessage(uid, 'Remove mode ON. Tap a GLOBAL EXTRA item button to delete it.');
+      await sendDmChecklist(uid);
+      return;
+    }
+
+    if (msg.text === '✅ Done removing') {
+      st.removeMode = false;
+      saveData(DB);
+      await bot.sendMessage(uid, 'Remove mode OFF.');
+      await sendDmChecklist(uid);
+      return;
+    }
+
+    if (msg.text === '➕ Add') {
+      if (!(await canUserModifyExtras(uid))) {
+        await bot.sendMessage(uid, '🚫 You are not allowed to add tasks.');
+        return;
+      }
+      st.awaitingAdd = true;
+      st.removeMode = false;
+      saveData(DB);
+      await bot.sendMessage(uid, 'Send the GLOBAL extra task text now.');
+      await sendDmChecklist(uid);
+      return;
+    }
+
+    if (st.awaitingAdd) {
+      if (!(await canUserModifyExtras(uid))) {
+        st.awaitingAdd = false;
+        saveData(DB);
+        await bot.sendMessage(uid, '🚫 You are not allowed to add tasks.');
+        await sendDmChecklist(uid);
+        return;
+      }
+
+      const result = addSharedExtraTask(msg.text.trim());
+      st.awaitingAdd = false;
+      saveData(DB);
+
+      if (!result.ok) {
+        if (result.reason === 'duplicate') {
+          await bot.sendMessage(uid, '⚠️ Task already exists.');
+        } else {
+          await bot.sendMessage(uid, '⚠️ Task is empty or invalid.');
+        }
+      } else {
+        await bot.sendMessage(uid, `✅ Added: ${result.text}`);
+      }
+
+      await sendDmChecklist(uid);
+      return;
+    }
+
+    const mm = msg.text.match(/^(?:✅|⬜️)\s+#(\d+)\b/);
+    if (mm) {
+      const n = parseInt(mm[1], 10);
+      const idx0 = n - 1;
+      const baseLen = BASE_ITEMS.length;
+      const extraLen = DB.sharedExtra.length;
+
+      if (idx0 >= 0 && idx0 < baseLen) {
+        st.baseDone[idx0] = !st.baseDone[idx0];
+        saveData(DB);
+        await sendDmChecklist(uid);
+        return;
+      }
+
+      if (idx0 >= baseLen && idx0 < baseLen + extraLen) {
+        const extraIndex = idx0 - baseLen;
+
+        if (st.removeMode) {
+          if (!(await canUserModifyExtras(uid))) {
+            await bot.sendMessage(uid, '🚫 You are not allowed to remove tasks.');
+            return;
+          }
+
+          const result = removeSharedExtraTaskAt(extraIndex);
+          if (result.ok) {
+            await bot.sendMessage(uid, `🗑 Removed: ${result.text}`);
+          } else {
+            await bot.sendMessage(uid, '⚠️ Failed to remove task.');
+          }
+        } else {
+          st.extraDone[extraIndex] = !st.extraDone[extraIndex];
+          saveData(DB);
+        }
+
+        await sendDmChecklist(uid);
+        return;
+      }
+    }
   });
 }
 
@@ -959,8 +927,7 @@ async function enterCOS(chatId) {
   if (!bot) throw new Error('Checklist module not initialized. Call registerChecklistHandlers(bot, deps) first.');
   await activateCosMode(chatId);
   await bot.sendMessage(chatId, 'You are now in COS checklist mode.');
-  await sendMenuHintOncePerBoot(chatId);
-  await sendOrUpdateChecklist(chatId);
+  await sendDmChecklist(chatId);
 }
 
 async function runChecklistStartup() {
@@ -1014,7 +981,6 @@ async function runChecklistStartup() {
   }
 
   scheduleRunReminders();
-
   if (DURATION_MINUTES > 0) {
     const durMs = DURATION_MINUTES * 60 * 1000;
     const warnMs = Math.max(0, durMs - SLEEP_WARNING_SECONDS * 1000);
