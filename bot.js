@@ -79,6 +79,27 @@ async function sendMainMenu(chatId, firstName = 'User') {
   await bot.sendMessage(chatId, text, mainMenuKeyboard());
 }
 
+function isCosTopicMessage(msg) {
+  if (!msg) return false;
+  return Number(msg.message_thread_id || 0) === COS_ID;
+}
+
+async function sendCosTopicRedirect(chatId) {
+  const text = `Please use the COS sub-topic to access COS features.`;
+
+  const options = COS_TOPIC_URL
+    ? {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: 'Go to COS Topic', url: COS_TOPIC_URL }
+          ]]
+        }
+      }
+    : undefined;
+
+  await bot.sendMessage(chatId, text, options);
+}
+
 async function sendHelp(chatId) {
   const text =
     `Available commands:\n\n` +
