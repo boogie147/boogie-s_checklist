@@ -8,6 +8,8 @@ const {
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const CHAT_ID = process.env.CHAT_ID;
+const COS_ID = Number(process.env.COS_ID || 0);
+const COS_TOPIC_URL = process.env.COS_TOPIC_URL || '';
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN is missing in environment variables.');
