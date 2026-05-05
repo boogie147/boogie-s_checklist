@@ -1,4 +1,5 @@
 const COS_ID = Number(process.env.COS_ID || 0);
+const COS_TOPIC_URL = process.env.COS_TOPIC_URL || '';
 const fs = require('fs');
 const path = require('path');
 
@@ -409,6 +410,25 @@ function helpText(isDm) {
   ].join('\n');
 }
 
+function inCosTopic(msg) {
+  return Number(msg?.message_thread_id || 0) === COS_ID;
+}
+
+async function sendCosTopicRedirectMessage(chatId) {
+  const text = 'Please use the COS sub-topic for COS actions.';
+  const options = COS_TOPIC_URL
+    ? {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: 'Go to COS Topic', url: COS_TOPIC_URL }
+          ]]
+        }
+      }
+    : undefined;
+
+  await bot.sendMessage(chatId, text, options);
+}
+
 function checklistStats(uid) {
   const st = getUserState(uid);
   const total = BASE_ITEMS.length + DB.sharedExtra.length;
@@ -551,7 +571,11 @@ async function sendMorningPollToGroup() {
     GROUP_CHAT_ID,
     'Good morning commanders, please indicate whether you will be in camp for today',
     ['Yes', 'No', 'MA/MC', 'OL', 'LL', 'OFF', 'COS Only'],
-    { is_anonymous: false, allows_multiple_answers: false }
+    {
+      is_anonymous: false,
+      allows_multiple_answers: false,
+      ...(COS_ID ? { message_thread_id: COS_ID } : {}),
+    }
   );
 }
 
@@ -574,6 +598,7 @@ async function announceSleepWarningToGroup() {
     GROUP_CHAT_ID,
     ['🟠 <b>COS Checklist Bot Standby</b>', 'Bot will go offline soon. Ensure your checklist is up to date.'].join('\n'),
     { parse_mode: 'HTML' }
+    ...(COS_ID ? { message_thread_id: COS_ID } : {}),
   );
 }
 
@@ -591,6 +616,7 @@ async function announceOfflineStatusToGroup(reason) {
         reason ? `<i>Reason:</i> ${escapeHtml(reason)}` : '',
       ].filter(Boolean).join('\n'),
       { parse_mode: 'HTML' }
+      ...(COS_ID ? { message_thread_id: COS_ID } : {}),
     );
     return;
   }
@@ -617,6 +643,7 @@ async function sendRunReminder(minMark) {
     if (GROUP_CHAT_ID) {
       try {
         await bot.sendMessage(GROUP_CHAT_ID, `⏱️ ${minMark} min — Reminder: no duty user is active.`);
+        ...(COS_ID ? { message_thread_id: COS_ID } : {}),
       } catch {}
     }
     return;
@@ -795,13 +822,13 @@ function registerChecklistHandlers(botInstance, deps = {}) {
       const groupId = GROUP_CHAT_ID ? String(GROUP_CHAT_ID) : msg ? String(msg.chat.id) : null;
       if (!groupId) return;
 
-      const threadId = msg?.message_thread_id || 0;
-
-      if (COS_ID && Number(threadId) !== COS_ID) {
+      if (COS_ID && !inCosTopic(msg)) {
         await bot.answerCallbackQuery(q.id, {
           text: 'Please use the COS topic.',
           show_alert: true,
         }).catch(() => {});
+
+        await sendCosTopicRedirectMessage(fromId);
         return;
       }
 
@@ -833,7 +860,7 @@ function registerChecklistHandlers(botInstance, deps = {}) {
       }
       return;
     }
-
+    
     if (!data.startsWith('cos:')) return;
 
     const uid = fromId;
