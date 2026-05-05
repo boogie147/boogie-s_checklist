@@ -536,7 +536,7 @@ async function sendStartDutyPromptToGroup() {
     },
   };
 
-  if (COS_TOPIC_ID) options.message_thread_id = COS_TOPIC_ID;
+  if (COS_ID) options.message_thread_id = COS_ID;
 
   await bot.sendMessage(
     GROUP_CHAT_ID,
@@ -559,7 +559,7 @@ async function announceAwakeToGroup() {
   if (!GROUP_CHAT_ID) return;
 
   const options = { parse_mode: 'HTML' };
-  if (COS_TOPIC_ID) options.message_thread_id = COS_TOPIC_ID;
+  if (COS_ID) options.message_thread_id = COS_ID;
 
   await bot.sendMessage(
     GROUP_CHAT_ID,
@@ -797,7 +797,7 @@ function registerChecklistHandlers(botInstance, deps = {}) {
 
       const threadId = msg?.message_thread_id || 0;
 
-      if (COS_TOPIC_ID && Number(threadId) !== COS_TOPIC_ID) {
+      if (COS_ID && Number(threadId) !== COS_ID) {
         await bot.answerCallbackQuery(q.id, {
           text: 'Please use the COS topic.',
           show_alert: true,
@@ -811,7 +811,7 @@ function registerChecklistHandlers(botInstance, deps = {}) {
       try {
         const name = await safeGetChatMemberName(groupId, fromId);
         await bot.sendMessage(groupId, `✅ Duty started: ${name}. Checklist will be in DM.`, {
-          ...(COS_TOPIC_ID ? { message_thread_id: COS_TOPIC_ID } : {}),
+          ...(COS_ID ? { message_thread_id: COS_ID } : {}),
         });
       } catch {}
 
@@ -825,7 +825,7 @@ function registerChecklistHandlers(botInstance, deps = {}) {
             groupId,
             '⚠️ I could not DM you. Please open the bot and send /start once, then tap Start Duty again.',
             {
-              ...(COS_TOPIC_ID ? { message_thread_id: COS_TOPIC_ID } : {}),
+              ...(COS_ID ? { message_thread_id: COS_ID } : {}),
             }
           );
         } catch {}
