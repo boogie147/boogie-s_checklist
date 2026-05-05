@@ -137,7 +137,9 @@
       ],
       "extra": [],
       "menuHintBootId": null,
-      "extraDone": []
+      "extraDone": [],
+      "awaitingAdd": false,
+      "checklistMessageId": null
     },
     "686917503": {
       "compact": true,
@@ -154,7 +156,9 @@
       ],
       "extra": [],
       "menuHintBootId": "2026-02-04T08:56:14.032Z",
-      "extraDone": []
+      "extraDone": [],
+      "awaitingAdd": false,
+      "checklistMessageId": null
     },
     "1180867285": {
       "compact": false,
@@ -170,7 +174,9 @@
         false
       ],
       "extraDone": [],
-      "menuHintBootId": "2026-03-11T05:55:26.810Z"
+      "menuHintBootId": "2026-03-11T05:55:26.810Z",
+      "awaitingAdd": false,
+      "checklistMessageId": null
     },
     "1383789229": {
       "compact": false,
@@ -187,7 +193,9 @@
       ],
       "extra": [],
       "menuHintBootId": "2026-02-13T03:36:47.090Z",
-      "extraDone": []
+      "extraDone": [],
+      "awaitingAdd": false,
+      "checklistMessageId": null
     },
     "1739818244": {
       "compact": false,
@@ -204,7 +212,9 @@
       ],
       "extra": [],
       "menuHintBootId": "2026-02-12T23:51:52.087Z",
-      "extraDone": []
+      "extraDone": [],
+      "awaitingAdd": false,
+      "checklistMessageId": null
     },
     "6171407541": {
       "compact": true,
@@ -220,7 +230,9 @@
         false
       ],
       "menuHintBootId": "2026-03-18T06:34:22.581Z",
-      "extraDone": []
+      "extraDone": [],
+      "awaitingAdd": false,
+      "checklistMessageId": null
     },
     "6149242922": {
       "compact": false,
@@ -237,7 +249,9 @@
       ],
       "extra": [],
       "menuHintBootId": "2026-02-03T09:17:00.390Z",
-      "extraDone": []
+      "extraDone": [],
+      "awaitingAdd": false,
+      "checklistMessageId": null
     },
     "7627172388": {
       "compact": false,
@@ -254,7 +268,9 @@
       ],
       "extra": [],
       "menuHintBootId": "2026-02-09T09:05:49.423Z",
-      "extraDone": []
+      "extraDone": [],
+      "awaitingAdd": false,
+      "checklistMessageId": null
     },
     "7606867599": {
       "compact": false,
@@ -271,7 +287,9 @@
       ],
       "extra": [],
       "menuHintBootId": "2026-02-05T22:15:19.008Z",
-      "extraDone": []
+      "extraDone": [],
+      "awaitingAdd": false,
+      "checklistMessageId": null
     },
     "5312709437": {
       "compact": false,
@@ -287,7 +305,9 @@
         false
       ],
       "extraDone": [],
-      "menuHintBootId": "2026-03-11T05:24:49.364Z"
+      "menuHintBootId": "2026-03-11T05:24:49.364Z",
+      "awaitingAdd": false,
+      "checklistMessageId": null
     }
   },
   "allow": {
