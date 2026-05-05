@@ -6,6 +6,12 @@ const {
   runChecklistStartup,
 } = require('./checklist');
 
+bot.on('message', async (msg) => {
+  console.log('chat.id =', msg.chat?.id);
+  console.log('message_thread_id =', msg.message_thread_id);
+  console.log('text =', msg.text);
+});
+
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const CHAT_ID = process.env.CHAT_ID;
 
