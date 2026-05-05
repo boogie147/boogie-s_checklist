@@ -4,7 +4,7 @@
 // Each user has their own completion state for shared EXTRA tasks.
 // Removing an EXTRA task removes it GLOBALLY for all users.
 
-const TelegramBot = require("node-telegram-bot-api");
+//const TelegramBot = require("node-telegram-bot-api");
 const fs = require("fs");
 const path = require("path");
 
@@ -70,7 +70,7 @@ function loadBaseItems() {
 const BASE_ITEMS = loadBaseItems();
 
 // ===================== Bot =====================
-#const bot = new TelegramBot(BOT_TOKEN, { polling: false });
+//const bot = new TelegramBot(BOT_TOKEN, { polling: false });
 
 // ===================== Persistence =====================
 const DATA_PATH = path.resolve(__dirname, "checklists.json");
