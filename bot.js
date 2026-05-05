@@ -1,6 +1,10 @@
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
-const { enterCOS, handleCOSMessage } = require('./services/cos');
+const {
+  registerChecklistHandlers,
+  enterCOS,
+  runChecklistStartup,
+} = require('./checklist');
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const CHAT_ID = process.env.CHAT_ID;
@@ -12,23 +16,12 @@ if (!BOT_TOKEN) {
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
-/**
- * =========================================================
- * USER SESSION STATE
- * =========================================================
- * Stores current menu/service for each user.
- * Key: chatId
- * Value: {
- *   menu: 'MAIN' | 'SERVICE',
- *   service: null | 'COS' | 'MC'
- * }
- */
 const userState = new Map();
 
 function getDefaultState() {
   return {
     menu: 'MAIN',
-    service: null
+    service: null,
   };
 }
 
@@ -45,41 +38,17 @@ function resetUserState(chatId) {
   userState.set(chatId, getDefaultState());
 }
 
-/**
- * =========================================================
- * SERVICE DEFINITIONS
- * =========================================================
- * Add new services here later.
- */
-const SERVICES = {
-  COS: {
-    key: 'COS',
-    label: 'COS',
-    description: 'COS service'
-  },
-  MC: {
-    key: 'MC',
-    label: 'MC',
-    description: 'MC service'
-  }
-};
-
-/**
- * =========================================================
- * KEYBOARDS
- * =========================================================
- */
 function mainMenuKeyboard() {
   return {
     reply_markup: {
       keyboard: [
         ['COS', 'MC'],
         ['Help', 'About'],
-        ['Refresh Menu']
+        ['Refresh Menu'],
       ],
       resize_keyboard: true,
-      one_time_keyboard: false
-    }
+      one_time_keyboard: false,
+    },
   };
 }
 
@@ -89,36 +58,14 @@ function mcMenuKeyboard() {
       keyboard: [
         ['Submit MC', 'MC Status'],
         ['MC Help'],
-        ['Back to Main Menu']
+        ['Back to Main Menu'],
       ],
       resize_keyboard: true,
-      one_time_keyboard: false
-    }
+      one_time_keyboard: false,
+    },
   };
 }
 
-async function sendStartupGreeting() {
-  if (!CHAT_ID) {
-    console.log('ℹ️ CHAT_ID not set. Skipping startup greeting.');
-    return;
-  }
-
-  try {
-    await bot.sendMessage(
-      CHAT_ID,
-      `✅ Bot is now online.\n\nPlease use /start to begin.`
-    );
-    console.log('✅ Startup greeting sent.');
-  } catch (err) {
-    console.error('❌ Failed to send startup greeting:', err.message || err);
-  }
-}
-
-/**
- * =========================================================
- * SHARED SENDERS
- * =========================================================
- */
 async function sendMainMenu(chatId, firstName = 'User') {
   resetUserState(chatId);
 
@@ -153,17 +100,10 @@ async function sendAbout(chatId) {
   await bot.sendMessage(chatId, text);
 }
 
-
-
-/**
- * =========================================================
- * MC SERVICE
- * =========================================================
- */
 async function enterMC(chatId) {
   setUserState(chatId, {
     menu: 'SERVICE',
-    service: 'MC'
+    service: 'MC',
   });
 
   const text =
@@ -208,27 +148,56 @@ async function handleMCMessage(chatId, text) {
   }
 }
 
-/**
- * =========================================================
- * SERVICE ROUTER
- * =========================================================
- */
+registerChecklistHandlers(bot, {
+  isCosActive: (chatId) => {
+    const state = getUserState(chatId);
+    return state.menu === 'SERVICE' && state.service === 'COS';
+  },
+  activateCosMode: async (chatId) => {
+    setUserState(chatId, {
+      menu: 'SERVICE',
+      service: 'COS',
+    });
+  },
+  exitCosMode: async (chatId) => {
+    const firstName = 'User';
+    await sendMainMenu(chatId, firstName);
+  },
+});
+
 const serviceHandlers = {
   COS: {
-    enter: (chatId) => enterCOS(bot, chatId, setUserState),
-    handle: (chatId, text) => handleCOSMessage(bot, chatId, text)
+    enter: async (chatId) => {
+      setUserState(chatId, {
+        menu: 'SERVICE',
+        service: 'COS',
+      });
+      await enterCOS(chatId);
+    },
   },
   MC: {
     enter: enterMC,
-    handle: handleMCMessage
-  }
+    handle: handleMCMessage,
+  },
 };
 
-/**
- * =========================================================
- * COMMAND HANDLERS
- * =========================================================
- */
+async function sendStartupGreeting() {
+  if (!CHAT_ID) {
+    console.log('ℹ️ CHAT_ID not set. Skipping startup greeting.');
+    return;
+  }
+
+  try {
+    await bot.sendMessage(
+      CHAT_ID,
+      `✅ Bot is now online.\n\nPlease use /start to begin.`
+    );
+    console.log('✅ Startup greeting sent.');
+  } catch (err) {
+    console.error('❌ Failed to send startup greeting:', err.message || err);
+  }
+}
+
 bot.onText(/^\/start$/, async (msg) => {
   const chatId = msg.chat.id;
   const firstName = msg.from?.first_name || 'User';
@@ -246,26 +215,17 @@ bot.onText(/^\/help$/, async (msg) => {
   await sendHelp(chatId);
 });
 
-/**
- * =========================================================
- * MESSAGE HANDLER
- * =========================================================
- */
 bot.on('message', async (msg) => {
   try {
     const chatId = msg.chat.id;
     const firstName = msg.from?.first_name || 'User';
     const text = msg.text;
 
-    // Ignore non-text
     if (!text) return;
-
-    // Ignore commands already handled above
     if (text.startsWith('/')) return;
 
     const state = getUserState(chatId);
 
-    // Shared buttons
     if (text === 'Back to Main Menu') {
       await sendMainMenu(chatId, firstName);
       return;
@@ -286,7 +246,6 @@ bot.on('message', async (msg) => {
       return;
     }
 
-    // Main menu selection
     if (state.menu === 'MAIN') {
       if (serviceHandlers[text]) {
         await serviceHandlers[text].enter(chatId);
@@ -301,7 +260,10 @@ bot.on('message', async (msg) => {
       return;
     }
 
-    // Service-level routing
+    if (state.menu === 'SERVICE' && state.service === 'COS') {
+      return;
+    }
+
     if (state.menu === 'SERVICE' && state.service) {
       const handler = serviceHandlers[state.service];
 
@@ -311,18 +273,12 @@ bot.on('message', async (msg) => {
       }
     }
 
-    // Fallback
     await sendMainMenu(chatId, firstName);
   } catch (err) {
     console.error('❌ Message handler error:', err);
   }
 });
 
-/**
- * =========================================================
- * ERROR HANDLERS
- * =========================================================
- */
 bot.on('polling_error', (err) => {
   console.error('❌ Polling error:', err?.message || err);
 });
@@ -330,4 +286,5 @@ bot.on('polling_error', (err) => {
 (async () => {
   console.log('✅ Menu bot is running...');
   await sendStartupGreeting();
+  await runChecklistStartup();
 })();
