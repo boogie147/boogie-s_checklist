@@ -1,3 +1,4 @@
+const COS_ID = Number(process.env.COS_ID || 0);
 const fs = require('fs');
 const path = require('path');
 
