@@ -767,6 +767,90 @@ function registerChecklistHandlers(botInstance, deps = {}) {
       const groupId = GROUP_CHAT_ID ? String(GROUP_CHAT_ID) : msg ? String(msg.chat.id) : null;
       if (!groupId) return;
 
+      const chatId = q.message?.chat?.id;
+      if (!chatId) return;
+
+      if (!isCosActive(chatId)) return;
+
+      const st = getUserState(chatId);
+      const data = q.data || '';
+
+      // Refresh
+      if (data === 'refresh_checklist') {
+        await bot.answerCallbackQuery(q.id, { text: 'Refreshing...' }).catch(() => {});
+        await sendDmChecklist(chatId);
+        return;
+      }
+
+      // Clear checks
+      if (data === 'clear_checks') {
+        resetChecksForUser(chatId);
+        await bot.answerCallbackQuery(q.id, { text: 'Checks cleared.' }).catch(() => {});
+        await sendDmChecklist(chatId);
+        return;
+      }
+
+      // Toggle compact/full
+      if (data === 'toggle_compact') {
+        st.compact = !st.compact;
+        saveData(DB);
+        await bot.answerCallbackQuery(q.id).catch(() => {});
+        await sendDmChecklist(chatId);
+        return;
+      }
+
+      // Toggle remove mode
+      if (data === 'toggle_remove_mode') {
+        if (!(await canUserModifyExtras(chatId))) {
+          await bot.answerCallbackQuery(q.id, {
+            text: 'Not allowed.',
+            show_alert: true,
+          }).catch(() => {});
+          return;
+        }
+
+        st.removeMode = !st.removeMode;
+        saveData(DB);
+        await bot.answerCallbackQuery(q.id).catch(() => {});
+        await sendDmChecklist(chatId);
+        return;
+        }
+
+      // Toggle base item: base_0, base_1, ...
+      if (data.startsWith('base_')) {
+        const idx = Number(data.split('_')[1]);
+        if (!Number.isNaN(idx) && idx >= 0 && idx < BASE_ITEMS.length) {
+          st.baseDone[idx] = !st.baseDone[idx];
+          saveData(DB);
+          await bot.answerCallbackQuery(q.id).catch(() => {});
+          await sendDmChecklist(chatId);
+          return;
+        }
+      }
+
+      // Toggle extra item: extra_0, extra_1, ...
+      if (data.startsWith('extra_')) {
+        const idx = Number(data.split('_')[1]);
+        if (!Number.isNaN(idx) && idx >= 0 && idx < DB.sharedExtra.length) {
+          if (st.removeMode) {
+            if (!(await canUserModifyExtras(chatId))) {
+              await bot.answerCallbackQuery(q.id, {
+                text: 'Not allowed.',
+                show_alert: true,
+              }).catch(() => {});
+              return;
+             }
+              removeSharedExtraTaskAt(idx);
+            } else {
+              st.extraDone[idx] = !st.extraDone[idx];
+              saveData(DB);
+            }
+
+            await bot.answerCallbackQuery(q.id).catch(() => {});
+            await sendDmChecklist(chatId);
+            return;
+          }
+      }
       setActiveDuty(fromId, groupId);
       await activateCosMode(fromId);
 
