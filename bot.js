@@ -188,12 +188,18 @@ registerChecklistHandlers(bot, {
 });
 
 const serviceHandlers = {
-  COS: {
-    enter: async (chatId) => {
+   COS: {
+    enter: async (chatId, msg) => {
+      if (!isCosTopicMessage(msg)) {
+        await sendCosTopicRedirect(chatId);
+        return;
+      }
+
       setUserState(chatId, {
         menu: 'SERVICE',
         service: 'COS',
       });
+
       await enterCOS(chatId);
     },
   },
