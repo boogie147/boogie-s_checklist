@@ -276,7 +276,7 @@ bot.on('message', async (msg) => {
 
     if (state.menu === 'MAIN') {
       if (serviceHandlers[text]) {
-        await serviceHandlers[text].enter(chatId);
+        await serviceHandlers[text].enter(chatId, msg);
         return;
       }
 
