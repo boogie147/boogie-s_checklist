@@ -70,7 +70,7 @@ function loadBaseItems() {
 const BASE_ITEMS = loadBaseItems();
 
 // ===================== Bot =====================
-const bot = new TelegramBot(BOT_TOKEN, { polling: false });
+#const bot = new TelegramBot(BOT_TOKEN, { polling: false });
 
 // ===================== Persistence =====================
 const DATA_PATH = path.resolve(__dirname, "checklists.json");
