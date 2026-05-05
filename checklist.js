@@ -13,7 +13,7 @@ const GROUP_CHAT_ID = ((process.env.CHAT_ID || '').trim()) || null;
 const DURATION_MINUTES = Number(process.env.DURATION_MINUTES || 30);
 const SLEEP_WARNING_SECONDS = Number(process.env.SLEEP_WARNING_SECONDS || 60);
 
-const ADD_REQUIRE_ALLOWLIST = String(process.env.ADD_REQUIRE_ALLOWLIST || 'true') === 'true';
+const ADD_REQUIRE_ALLOWLIST = String(process.env.ADD_REQUIRE_ALLOWLIST || 'false') === 'true';
 const SEND_MORNING_POLL = String(process.env.SEND_MORNING_POLL || 'true') === 'true';
 
 const MORNING_POLL_SGT_HOUR = Number(process.env.MORNING_POLL_SGT_HOUR || 6);
@@ -430,19 +430,22 @@ function formatChecklist(uid) {
   const allLines = baseLines.concat(extraLines);
 
   const { total, doneCount, complete } = checklistStats(uid);
-  const left = total - doneCount;
 
-  const header = [
+  const headerLines = [
     `<b>Your COS Checklist</b>`,
     `Done: <b>${doneCount}/${total}</b>${complete ? ' ✅ COMPLETE' : ''}`,
-    st.removeMode ? `Mode: <b>REMOVE</b>` : `Mode: <b>NORMAL</b>`,
-    st.awaitingAdd ? `Status: <b>Waiting for new task text...</b>` : '',
-    '',
-  ].filter(Boolean).join('\n');
+    `Mode: <b>${st.removeMode ? 'REMOVE' : 'NORMAL'}</b>`,
+  ];
 
-  if (st.compact) return header;
+  if (st.awaitingAdd) {
+    headerLines.push(`Status: <b>Waiting for new task text...</b>`);
+  }
 
-  return header + allLines.join('\n');
+  if (st.compact) {
+    return headerLines.join('\n');
+  }
+
+  return `${headerLines.join('\n')}\n\n${allLines.join('\n')}`;
 }
 
 function truncate(s, n) {
