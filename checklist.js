@@ -529,12 +529,20 @@ async function sendStartDutyPromptToGroup() {
     line = `Current duty: ${escapeHtml(name)}`;
   }
 
-  await bot.sendMessage(GROUP_CHAT_ID, `🧾 <b>Duty Checklist</b>\n${line}`, {
+  const options = {
     parse_mode: 'HTML',
     reply_markup: {
       inline_keyboard: [[{ text: '✅ Start Duty (DM)', callback_data: 'start_duty' }]],
     },
-  });
+  };
+
+  if (COS_TOPIC_ID) options.message_thread_id = COS_TOPIC_ID;
+
+  await bot.sendMessage(
+    GROUP_CHAT_ID,
+    `🧾 <b>Duty Checklist</b>\n${line}`,
+    options
+  );
 }
 
 async function sendMorningPollToGroup() {
@@ -787,12 +795,24 @@ function registerChecklistHandlers(botInstance, deps = {}) {
       const groupId = GROUP_CHAT_ID ? String(GROUP_CHAT_ID) : msg ? String(msg.chat.id) : null;
       if (!groupId) return;
 
+      const threadId = msg?.message_thread_id || 0;
+
+      if (COS_TOPIC_ID && Number(threadId) !== COS_TOPIC_ID) {
+        await bot.answerCallbackQuery(q.id, {
+          text: 'Please use the COS topic.',
+          show_alert: true,
+        }).catch(() => {});
+        return;
+      }
+
       setActiveDuty(fromId, groupId);
       await activateCosMode(fromId);
 
       try {
         const name = await safeGetChatMemberName(groupId, fromId);
-        await bot.sendMessage(groupId, `✅ Duty started: ${name}. Checklist will be in DM.`);
+        await bot.sendMessage(groupId, `✅ Duty started: ${name}. Checklist will be in DM.`, {
+          ...(COS_TOPIC_ID ? { message_thread_id: COS_TOPIC_ID } : {}),
+        });
       } catch {}
 
       try {
@@ -803,7 +823,10 @@ function registerChecklistHandlers(botInstance, deps = {}) {
         try {
           await bot.sendMessage(
             groupId,
-            '⚠️ I could not DM you. Please open the bot and send /start once, then tap Start Duty again.'
+            '⚠️ I could not DM you. Please open the bot and send /start once, then tap Start Duty again.',
+            {
+              ...(COS_TOPIC_ID ? { message_thread_id: COS_TOPIC_ID } : {}),
+            }
           );
         } catch {}
         console.error('start_duty DM error:', e?.response?.body || e);
