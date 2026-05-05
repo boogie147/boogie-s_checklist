@@ -549,10 +549,14 @@ async function sendMorningPollToGroup() {
 
 async function announceAwakeToGroup() {
   if (!GROUP_CHAT_ID) return;
+
+  const options = { parse_mode: 'HTML' };
+  if (COS_TOPIC_ID) options.message_thread_id = COS_TOPIC_ID;
+
   await bot.sendMessage(
     GROUP_CHAT_ID,
     ['🟢 <b>COS Checklist Bot Online</b>', 'Use <b>Start Duty</b> to open your checklist in DM.'].join('\n'),
-    { parse_mode: 'HTML' }
+    options
   );
 }
 
