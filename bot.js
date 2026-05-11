@@ -46,6 +46,13 @@ function resetUserState(key) {
   userState.set(key, getDefaultState());
 }
 
+function getThreadOptions(msg) {
+  if (msg && msg.chat.type !== 'private' && msg.message_thread_id) {
+    return { message_thread_id: msg.message_thread_id };
+  }
+  return {};
+}
+
 function mainMenuKeyboard() {
   return {
     reply_markup: {
@@ -74,7 +81,7 @@ function mcMenuKeyboard() {
   };
 }
 
-async function sendMainMenu(chatId, firstName = 'User', sessionKey = String(chatId)) {
+async function sendMainMenu(chatId, firstName = 'User', sessionKey = String(chatId), threadOptions = {}) {
   resetUserState(sessionKey);
 
   const text =
@@ -86,6 +93,7 @@ async function sendMainMenu(chatId, firstName = 'User', sessionKey = String(chat
   await bot.sendMessage(chatId, text, {
     parse_mode: 'Markdown',
     ...mainMenuKeyboard(),
+    ...threadOptions,
   });
 }
 
@@ -94,7 +102,7 @@ function isCosTopicMessage(msg) {
   return Number(msg.message_thread_id || 0) === COS_ID;
 }
 
-async function sendCosTopicRedirect(chatId) {
+async function sendCosTopicRedirect(chatId, threadOptions = {}) {
   const text = `Please use the COS sub-topic to access COS features.`;
 
   const options = COS_TOPIC_URL
@@ -103,14 +111,15 @@ async function sendCosTopicRedirect(chatId) {
           inline_keyboard: [[
             { text: 'Go to COS Topic', url: COS_TOPIC_URL }
           ]]
-        }
+        },
+        ...threadOptions,
       }
-    : undefined;
+    : threadOptions;
 
   await bot.sendMessage(chatId, text, options);
 }
 
-async function sendHelp(chatId) {
+async function sendHelp(chatId, threadOptions = {}) {
   const text =
     `✨ *Bravo Menu Bot — Help Centre* ✨\n\n` +
     `Welcome to the Bravo Menu Bot.\n` +
@@ -132,10 +141,11 @@ async function sendHelp(chatId) {
 
   await bot.sendMessage(chatId, text, {
     parse_mode: 'Markdown',
+    ...threadOptions,
   });
 }
 
-async function sendAbout(chatId) {
+async function sendAbout(chatId, threadOptions = {}) {
   const text =
     `✨ *About Bravo Menu Bot* ✨\n\n` +
     `Bravo Menu Bot is a service navigation bot designed to help users access different functions from one central menu.\n\n` +
@@ -148,10 +158,11 @@ async function sendAbout(chatId) {
 
   await bot.sendMessage(chatId, text, {
     parse_mode: 'Markdown',
+    ...threadOptions,
   });
 }
 
-async function enterMC(chatId, sessionKey) {
+async function enterMC(chatId, sessionKey, threadOptions = {}) {
   setUserState(sessionKey, {
     menu: 'SERVICE',
     service: 'MC',
@@ -161,22 +172,27 @@ async function enterMC(chatId, sessionKey) {
     `You are now in MC service.\n\n` +
     `Please choose an option.`;
 
-  await bot.sendMessage(chatId, text, mcMenuKeyboard());
+  await bot.sendMessage(chatId, text, {
+    ...mcMenuKeyboard(),
+    ...threadOptions,
+  });
 }
 
-async function handleMCMessage(chatId, text) {
+async function handleMCMessage(chatId, text, threadOptions = {}) {
   switch (text) {
     case 'Submit MC':
       await bot.sendMessage(
         chatId,
-        `Submit MC selected.\n\nReplace this with your MC submission workflow.`
+        `Submit MC selected.\n\nReplace this with your MC submission workflow.`,
+        threadOptions
       );
       break;
 
     case 'MC Status':
       await bot.sendMessage(
         chatId,
-        `MC Status selected.\n\nReplace this with your MC status workflow.`
+        `MC Status selected.\n\nReplace this with your MC status workflow.`,
+        threadOptions
       );
       break;
 
@@ -186,14 +202,16 @@ async function handleMCMessage(chatId, text) {
         `MC Help:\n` +
           `- Submit MC\n` +
           `- MC Status\n\n` +
-          `Select an option from the keyboard.`
+          `Select an option from the keyboard.`,
+        threadOptions
       );
       break;
 
     default:
       await bot.sendMessage(
         chatId,
-        `Invalid MC option. Please use the MC menu buttons.`
+        `Invalid MC option. Please use the MC menu buttons.`,
+        threadOptions
       );
       break;
   }
@@ -219,16 +237,9 @@ const serviceHandlers = {
   COS: {
     enter: async (chatId, msg) => {
       if (!isCosTopicMessage(msg)) {
-        await sendCosTopicRedirect(chatId);
+        await sendCosTopicRedirect(chatId, getThreadOptions(msg));
         return;
       }
-
-      const sessionKey = getSessionKey(msg);
-
-      setUserState(sessionKey, {
-        menu: 'SERVICE',
-        service: 'COS',
-      });
 
       await enterCOS(msg.from.id);
     },
@@ -236,7 +247,7 @@ const serviceHandlers = {
   MC: {
     enter: async (chatId, msg) => {
       const sessionKey = getSessionKey(msg);
-      await enterMC(chatId, sessionKey);
+      await enterMC(chatId, sessionKey, getThreadOptions(msg));
     },
     handle: handleMCMessage,
   },
@@ -269,19 +280,18 @@ bot.onText(/^\/start$/, async (msg) => {
   const chatId = msg.chat.id;
   const firstName = msg.from?.first_name || 'User';
   const sessionKey = getSessionKey(msg);
-  await sendMainMenu(chatId, firstName, sessionKey);
+  await sendMainMenu(chatId, firstName, sessionKey, getThreadOptions(msg));
 });
 
 bot.onText(/^\/menu$/, async (msg) => {
   const chatId = msg.chat.id;
   const firstName = msg.from?.first_name || 'User';
   const sessionKey = getSessionKey(msg);
-  await sendMainMenu(chatId, firstName, sessionKey);
+  await sendMainMenu(chatId, firstName, sessionKey, getThreadOptions(msg));
 });
 
 bot.onText(/^\/help$/, async (msg) => {
-  const chatId = msg.chat.id;
-  await sendHelp(chatId);
+  await sendHelp(msg.chat.id, getThreadOptions(msg));
 });
 
 bot.on('message', async (msg) => {
@@ -295,24 +305,25 @@ bot.on('message', async (msg) => {
 
     const sessionKey = getSessionKey(msg);
     const state = getUserState(sessionKey);
+    const threadOptions = getThreadOptions(msg);
 
     if (text === 'Back to Main Menu') {
-      await sendMainMenu(chatId, firstName, sessionKey);
+      await sendMainMenu(chatId, firstName, sessionKey, threadOptions);
       return;
     }
 
     if (text === 'Refresh Menu') {
-      await sendMainMenu(chatId, firstName, sessionKey);
+      await sendMainMenu(chatId, firstName, sessionKey, threadOptions);
       return;
     }
 
     if (text === 'Help') {
-      await sendHelp(chatId);
+      await sendHelp(chatId, threadOptions);
       return;
     }
 
     if (text === 'About') {
-      await sendAbout(chatId);
+      await sendAbout(chatId, threadOptions);
       return;
     }
 
@@ -325,7 +336,10 @@ bot.on('message', async (msg) => {
       await bot.sendMessage(
         chatId,
         `Invalid selection.\nPlease choose a service from the menu.`,
-        mainMenuKeyboard()
+        {
+          ...mainMenuKeyboard(),
+          ...threadOptions,
+        }
       );
       return;
     }
@@ -338,12 +352,12 @@ bot.on('message', async (msg) => {
       const handler = serviceHandlers[state.service];
 
       if (handler && typeof handler.handle === 'function') {
-        await handler.handle(chatId, text);
+        await handler.handle(chatId, text, threadOptions);
         return;
       }
     }
 
-    await sendMainMenu(chatId, firstName, sessionKey);
+    await sendMainMenu(chatId, firstName, sessionKey, threadOptions);
   } catch (err) {
     console.error('❌ Message handler error:', err);
   }
