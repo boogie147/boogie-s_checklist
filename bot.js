@@ -26,17 +26,24 @@ function getDefaultState() {
   };
 }
 
-function getUserState(chatId) {
-  return userState.get(chatId) || getDefaultState();
+function getSessionKey(msg) {
+  if (msg.chat.type === 'private') {
+    return String(msg.chat.id);
+  }
+  return `${msg.chat.id}:${msg.from?.id || 'unknown'}`;
 }
 
-function setUserState(chatId, newState) {
-  const current = getUserState(chatId);
-  userState.set(chatId, { ...current, ...newState });
+function getUserState(key) {
+  return userState.get(key) || getDefaultState();
 }
 
-function resetUserState(chatId) {
-  userState.set(chatId, getDefaultState());
+function setUserState(key, newState) {
+  const current = getUserState(key);
+  userState.set(key, { ...current, ...newState });
+}
+
+function resetUserState(key) {
+  userState.set(key, getDefaultState());
 }
 
 function mainMenuKeyboard() {
@@ -67,8 +74,8 @@ function mcMenuKeyboard() {
   };
 }
 
-async function sendMainMenu(chatId, firstName = 'User') {
-  resetUserState(chatId);
+async function sendMainMenu(chatId, firstName = 'User', sessionKey = String(chatId)) {
+  resetUserState(sessionKey);
 
   const text =
     `✨ Welcome to *Bravo Menu Bot*, ${firstName}. ✨\n\n` +
@@ -144,8 +151,8 @@ async function sendAbout(chatId) {
   });
 }
 
-async function enterMC(chatId) {
-  setUserState(chatId, {
+async function enterMC(chatId, sessionKey) {
+  setUserState(sessionKey, {
     menu: 'SERVICE',
     service: 'MC',
   });
@@ -193,40 +200,44 @@ async function handleMCMessage(chatId, text) {
 }
 
 registerChecklistHandlers(bot, {
-  isCosActive: (chatId) => {
-    const state = getUserState(chatId);
+  isCosActive: (uid) => {
+    const state = getUserState(String(uid));
     return state.menu === 'SERVICE' && state.service === 'COS';
   },
-  activateCosMode: async (chatId) => {
-    setUserState(chatId, {
+  activateCosMode: async (uid) => {
+    setUserState(String(uid), {
       menu: 'SERVICE',
       service: 'COS',
     });
   },
-  exitCosMode: async (chatId) => {
-    const firstName = 'User';
-    await sendMainMenu(chatId, firstName);
+  exitCosMode: async (uid) => {
+    await sendMainMenu(uid, 'User', String(uid));
   },
 });
 
 const serviceHandlers = {
-   COS: {
+  COS: {
     enter: async (chatId, msg) => {
       if (!isCosTopicMessage(msg)) {
         await sendCosTopicRedirect(chatId);
         return;
       }
 
-      setUserState(chatId, {
+      const sessionKey = getSessionKey(msg);
+
+      setUserState(sessionKey, {
         menu: 'SERVICE',
         service: 'COS',
       });
 
-      await enterCOS(chatId);
+      await enterCOS(msg.from.id);
     },
   },
   MC: {
-    enter: enterMC,
+    enter: async (chatId, msg) => {
+      const sessionKey = getSessionKey(msg);
+      await enterMC(chatId, sessionKey);
+    },
     handle: handleMCMessage,
   },
 };
@@ -257,13 +268,15 @@ async function sendStartupGreeting() {
 bot.onText(/^\/start$/, async (msg) => {
   const chatId = msg.chat.id;
   const firstName = msg.from?.first_name || 'User';
-  await sendMainMenu(chatId, firstName);
+  const sessionKey = getSessionKey(msg);
+  await sendMainMenu(chatId, firstName, sessionKey);
 });
 
 bot.onText(/^\/menu$/, async (msg) => {
   const chatId = msg.chat.id;
   const firstName = msg.from?.first_name || 'User';
-  await sendMainMenu(chatId, firstName);
+  const sessionKey = getSessionKey(msg);
+  await sendMainMenu(chatId, firstName, sessionKey);
 });
 
 bot.onText(/^\/help$/, async (msg) => {
@@ -280,15 +293,16 @@ bot.on('message', async (msg) => {
     if (!text) return;
     if (text.startsWith('/')) return;
 
-    const state = getUserState(chatId);
+    const sessionKey = getSessionKey(msg);
+    const state = getUserState(sessionKey);
 
     if (text === 'Back to Main Menu') {
-      await sendMainMenu(chatId, firstName);
+      await sendMainMenu(chatId, firstName, sessionKey);
       return;
     }
 
     if (text === 'Refresh Menu') {
-      await sendMainMenu(chatId, firstName);
+      await sendMainMenu(chatId, firstName, sessionKey);
       return;
     }
 
@@ -329,7 +343,7 @@ bot.on('message', async (msg) => {
       }
     }
 
-    await sendMainMenu(chatId, firstName);
+    await sendMainMenu(chatId, firstName, sessionKey);
   } catch (err) {
     console.error('❌ Message handler error:', err);
   }
