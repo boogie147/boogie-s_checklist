@@ -290,6 +290,22 @@ const escapeHtml = (s) =>
     "'": '&#39;',
   }[m]));
 
+function formatSgtDateTime(iso) {
+  const d = new Date(iso);
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Singapore',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(d);
+
+  const get = (type) => parts.find((p) => p.type === type)?.value || '';
+  return `${get('day')}/${get('month')}/${get('year')} ${get('hour')}:${get('minute')}`;
+}
+
 async function safeGetChatMemberName(chatId, userId) {
   try {
     const m = await bot.getChatMember(chatId, userId);
@@ -399,7 +415,6 @@ function helpText(isDm) {
     `• /help — show this help`,
     `• /menu — redraw checklist`,
     `• /clear — clear all your checks`,
-    `• /startduty — resend the Duty Checklist message from the COS topic`,
     ``,
     `<b>Group admin commands</b>`,
     `• /allow — (reply to a user) allow them to add/remove GLOBAL EXTRA tasks in DM`,
@@ -438,6 +453,26 @@ function checklistStats(uid) {
   const total = BASE_ITEMS.length + DB.sharedExtra.length;
   const doneCount = st.baseDone.filter(Boolean).length + st.extraDone.filter(Boolean).length;
   return { total, doneCount, complete: total > 0 && doneCount === total };
+}
+
+async function getDutySummaryText() {
+  const active = getActiveDuty();
+
+  if (!active || !active.userId) {
+    return `<b>Duty Update</b>\n\nNo active duty user recorded.`;
+  }
+
+  const name = await safeGetChatMemberName(GROUP_CHAT_ID, active.userId);
+  const started = formatSgtDateTime(active.sinceIso);
+  const { total, doneCount } = checklistStats(active.userId);
+
+  return [
+    `<b>Duty Update</b>`,
+    ``,
+    `1. Time start of duty: <b>${escapeHtml(started)}</b>`,
+    `2. Personnel on duty: <b>${escapeHtml(name)}</b>`,
+    `3. Tasks completed: <b>${doneCount}/${total}</b>`,
+  ].join('\n');
 }
 
 function formatChecklist(uid) {
@@ -591,7 +626,7 @@ async function announceAwakeToGroup() {
 
   await bot.sendMessage(
     GROUP_CHAT_ID,
-    ['🟢 <b>COS Checklist Bot Online</b>', 'Use <b>Start Duty</b> or <code>/startduty</code> to start duty and open your checklist in DM.'].join('\n'),
+    ['🟢 <b>COS Checklist Bot Online</b>', 'Use <b>Start Duty</b> to open your checklist in DM.'].join('\n'),
     options
   );
 }
@@ -692,6 +727,38 @@ async function sendRunReminder(minMark) {
   }
 }
 
+async function startDutyForUser(userId) {
+  const groupId = GROUP_CHAT_ID ? String(GROUP_CHAT_ID) : null;
+  if (!groupId) throw new Error('CHAT_ID is not set.');
+
+  setActiveDuty(userId, groupId);
+  await activateCosMode(userId);
+
+  try {
+    const name = await safeGetChatMemberName(groupId, userId);
+    await bot.sendMessage(groupId, `✅ Duty started: ${name}. Checklist will be in DM.`, {
+      ...(COS_ID ? { message_thread_id: COS_ID } : {}),
+    });
+  } catch {}
+
+  try {
+    await bot.sendMessage(userId, 'You are now on duty. Here is your checklist:');
+    await sendMenuHintOncePerBoot(userId);
+    await sendOrUpdateChecklist(userId);
+  } catch (e) {
+    try {
+      await bot.sendMessage(
+        groupId,
+        '⚠️ I could not DM you. Please open the bot and send /start once, then tap Start Duty again.',
+        {
+          ...(COS_ID ? { message_thread_id: COS_ID } : {}),
+        }
+      );
+    } catch {}
+    console.error('startDutyForUser DM error:', e?.response?.body || e);
+  }
+}
+
 function scheduleRunReminders() {
   const marks = [30, 45, 50];
   for (const minMark of marks) {
@@ -754,27 +821,6 @@ function registerChecklistHandlers(botInstance, deps = {}) {
     if (!uid || !isCosActive(uid)) return;
     resetChecksForUser(uid);
     await sendOrUpdateChecklist(uid);
-  });
-
-  bot.onText(cmdRe('startduty'), async (msg) => {
-    const chatId = msg.chat.id;
-
-    if (msg.chat.type === 'private') {
-      await sendCosTopicRedirectMessage(chatId);
-      return;
-    }
-
-    if (GROUP_CHAT_ID && String(chatId) !== String(GROUP_CHAT_ID)) {
-      await sendCosTopicRedirectMessage(chatId, msg.message_thread_id);
-      return;
-    }
-
-    if (COS_ID && !inCosTopic(msg)) {
-      await sendCosTopicRedirectMessage(chatId, msg.message_thread_id);
-      return;
-    }
-
-    await sendStartDutyPromptToGroup();
   });
 
   bot.onText(cmdRe('allow'), async (msg) => {
@@ -855,6 +901,8 @@ function registerChecklistHandlers(botInstance, deps = {}) {
     const fromId = q.from?.id;
     const msg = q.message;
 
+    if (data.startsWith('menu:')) return;
+
     try {
       await bot.answerCallbackQuery(q.id);
     } catch {}
@@ -875,32 +923,7 @@ function registerChecklistHandlers(botInstance, deps = {}) {
         return;
       }
 
-      setActiveDuty(fromId, groupId);
-      await activateCosMode(fromId);
-
-      try {
-        const name = await safeGetChatMemberName(groupId, fromId);
-        await bot.sendMessage(groupId, `✅ Duty started: ${name}. Checklist will be in DM.`, {
-          ...(COS_ID ? { message_thread_id: COS_ID } : {}),
-        });
-      } catch {}
-
-      try {
-        await bot.sendMessage(fromId, 'You are now on duty. Here is your checklist:');
-        await sendMenuHintOncePerBoot(fromId);
-        await sendOrUpdateChecklist(fromId);
-      } catch (e) {
-        try {
-          await bot.sendMessage(
-            groupId,
-            '⚠️ I could not DM you. Please open the bot and send /start once, then tap Start Duty again.',
-            {
-              ...(COS_ID ? { message_thread_id: COS_ID } : {}),
-            }
-          );
-        } catch {}
-        console.error('start_duty DM error:', e?.response?.body || e);
-      }
+      await startDutyForUser(fromId);
       return;
     }
 
@@ -1024,7 +1047,7 @@ function registerChecklistHandlers(botInstance, deps = {}) {
 
   bot.on('message', async (msg) => {
     if (!msg.text) return;
-    if (/^\/(start|help|menu|clear|startduty|allow|deny|whoallowed)\b/i.test(msg.text)) return;
+    if (/^\/(start|help|menu|clear|allow|deny|whoallowed)\b/i.test(msg.text)) return;
     if (msg.chat.type !== 'private') return;
 
     const uid = msg.from?.id;
@@ -1139,4 +1162,6 @@ module.exports = {
   registerChecklistHandlers,
   enterCOS,
   runChecklistStartup,
+  startDutyForUser,
+  getDutySummaryText,
 };
