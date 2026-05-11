@@ -2,11 +2,8 @@ name: Run Telegram Checklist Bot
 
 on:
   schedule:
-    # 06:00 SGT Mon–Fri  (SGT UTC+8 => 22:00 UTC previous day, Sun–Thu)
     - cron: "0 22 * * 0-4"
-    # 09:00 SGT Mon–Fri  (SGT UTC+8 => 01:00 UTC Mon–Fri)
     - cron: "0 1 * * 1-5"
-    # 16:10 SGT Mon–Thu  (SGT UTC+8 => 08:10 UTC Mon–Thu)
     - cron: "10 8 * * 1-4"
 
   workflow_dispatch:
@@ -72,24 +69,19 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Defaults for workflow_dispatch
           DURATION="${{ github.event.inputs.duration_minutes || '30' }}"
           SEND_POLL="${{ github.event.inputs.send_poll_on_start || 'false' }}"
 
-          # Scheduled runs
           if [[ -n "${{ github.event.schedule }}" ]]; then
             CRON="${{ github.event.schedule }}"
 
             if [[ "$CRON" == "0 22 * * 0-4" ]]; then
-              # 06:00 SGT run
               DURATION="60"
               SEND_POLL="true"
             elif [[ "$CRON" == "0 1 * * 1-5" ]]; then
-              # 09:00 SGT run
               DURATION="60"
               SEND_POLL="false"
             elif [[ "$CRON" == "10 8 * * 1-4" ]]; then
-              # 16:10 SGT run
               DURATION="60"
               SEND_POLL="false"
             fi
@@ -104,6 +96,8 @@ jobs:
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
+          COS_ID: ${{ secrets.COS_ID }}
+          COS_TOPIC_URL: ${{ secrets.COS_TOPIC_URL }}
 
           DROP_PENDING: "true"
           VERBOSE: ${{ github.event.inputs.verbose || 'true' }}
@@ -112,16 +106,13 @@ jobs:
 
           SEND_MORNING_POLL: ${{ steps.decide.outputs.send_poll }}
 
-          # Production morning poll time
           MORNING_POLL_SGT_HOUR: "6"
           MORNING_POLL_SGT_MINUTE: "0"
           MORNING_POLL_WINDOW_MINUTES: "60"
 
-          # Recommended boot semantics
           RESET_CHECKS_ON_BOOT: "true"
           CLEAR_ACTIVE_DUTY_ON_BOOT: "true"
 
-      
         run: node bot.js
 
       - name: Commit & push updated checklists.json
