@@ -105,24 +105,43 @@ async function sendCosTopicRedirect(chatId) {
 
 async function sendHelp(chatId) {
   const text =
-    `Available commands:\n\n` +
-    `/start - Start the bot\n` +
-    `/menu - Return to main menu\n` +
-    `/help - Show help\n\n` +
-    `Use the keyboard buttons to select a service.`;
+    `✨ *Bravo Menu Bot — Help Centre* ✨\n\n` +
+    `Welcome to the Bravo Menu Bot.\n` +
+    `Use the menu buttons or type commands manually if you prefer.\n\n` +
+    `*Available Commands*\n` +
+    `• /start — Open the service selection menu\n` +
+    `• /menu — Return to the main menu\n` +
+    `• /help — Show this help message\n\n` +
+    `*Available Services*\n` +
+    `• COS\n` +
+    `• MC\n\n` +
+    `*Manual Input*\n` +
+    `You may also reply to the bot and manually type commands instead of pressing the buttons.\n` +
+    `For example:\n` +
+    `• /start\n` +
+    `• /menu\n` +
+    `• /help\n\n` +
+    `Please select the service you require to continue.`;
 
-  await bot.sendMessage(chatId, text);
+  await bot.sendMessage(chatId, text, {
+    parse_mode: 'Markdown',
+  });
 }
 
 async function sendAbout(chatId) {
   const text =
-    `This is a modular service bot.\n\n` +
-    `Current services:\n` +
-    `- COS\n` +
-    `- MC\n\n` +
-    `More services can be added later.`;
+    `✨ *About Bravo Menu Bot* ✨\n\n` +
+    `Bravo Menu Bot is a service navigation bot designed to help users access different functions from one central menu.\n\n` +
+    `*Current Services*\n` +
+    `• COS\n` +
+    `• MC\n\n` +
+    `*Purpose*\n` +
+    `This bot helps guide users to the correct service flow quickly and clearly.\n\n` +
+    `More services and features may be added in the future.`;
 
-  await bot.sendMessage(chatId, text);
+  await bot.sendMessage(chatId, text, {
+    parse_mode: 'Markdown',
+  });
 }
 
 async function enterMC(chatId) {
