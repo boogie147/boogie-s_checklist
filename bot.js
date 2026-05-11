@@ -71,12 +71,15 @@ async function sendMainMenu(chatId, firstName = 'User') {
   resetUserState(chatId);
 
   const text =
-    `Hello ${firstName}.\n\n` +
-    `Please select the service you wish to use:\n` +
+    `✨ Welcome to *Bravo Menu Bot*, ${firstName}. ✨\n\n` +
+    `Please select the service you wish to use:\n\n` +
     `1. COS\n` +
     `2. MC`;
 
-  await bot.sendMessage(chatId, text, mainMenuKeyboard());
+  await bot.sendMessage(chatId, text, {
+    parse_mode: 'Markdown',
+    ...mainMenuKeyboard(),
+  });
 }
 
 function isCosTopicMessage(msg) {
@@ -215,11 +218,17 @@ async function sendStartupGreeting() {
     return;
   }
 
+  const text =
+    `✨ *Welcome to Bravo Menu Bot* ✨\n\n` +
+    `Please use /start to select the service that you require.\n\n` +
+    `Available services:\n` +
+    `• COS\n` +
+    `• MC`;
+
   try {
-    await bot.sendMessage(
-      CHAT_ID,
-      `✅ Bot is now online.\n\nPlease use /start to begin.`
-    );
+    await bot.sendMessage(CHAT_ID, text, {
+      parse_mode: 'Markdown',
+    });
     console.log('✅ Startup greeting sent.');
   } catch (err) {
     console.error('❌ Failed to send startup greeting:', err.message || err);
