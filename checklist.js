@@ -591,7 +591,7 @@ async function announceAwakeToGroup() {
 
   await bot.sendMessage(
     GROUP_CHAT_ID,
-    ['🟢 <b>COS Checklist Bot Online</b>', 'Use <b>Start Duty</b> or <code>/startduty</code> to start duty and open your checklist in DM.'].join('\n')
+    ['🟢 <b>COS Checklist Bot Online</b>', 'Use <b>Start Duty</b> or <code>/startduty</code> to start duty and open your checklist in DM.'].join('\n'),
     options
   );
 }
