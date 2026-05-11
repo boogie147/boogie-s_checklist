@@ -8,8 +8,16 @@ const {
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const CHAT_ID = process.env.CHAT_ID;
+
 const COS_ID = Number(process.env.COS_ID || 0);
 const COS_TOPIC_URL = process.env.COS_TOPIC_URL || '';
+
+const MC_ID = Number(process.env.MC_ID || 0);
+const MC_TOPIC_URL = process.env.MC_TOPIC_URL || '';
+
+const MC_FORM_URL =
+  process.env.MC_FORM_URL ||
+  'https://docs.google.com/forms/d/e/1FAIpQLSfjeklk85kKJdP_ELHelTWR3UFHLY0EfW5dFEUiKG4PRPB8JQ/viewform?usp=header';
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN is missing in environment variables.');
@@ -30,7 +38,8 @@ function getSessionKey(msg) {
   if (msg.chat.type === 'private') {
     return String(msg.chat.id);
   }
-  return `${msg.chat.id}:${msg.from?.id || 'unknown'}`;
+  const threadId = msg.message_thread_id ? String(msg.message_thread_id) : 'main';
+  return `${msg.chat.id}:${threadId}:${msg.from?.id || 'unknown'}`;
 }
 
 function getUserState(key) {
@@ -102,6 +111,11 @@ function isCosTopicMessage(msg) {
   return Number(msg.message_thread_id || 0) === COS_ID;
 }
 
+function isMcTopicMessage(msg) {
+  if (!msg) return false;
+  return Number(msg.message_thread_id || 0) === MC_ID;
+}
+
 async function sendCosTopicRedirect(chatId, threadOptions = {}) {
   const text = `Please use the COS sub-topic to access COS features.`;
 
@@ -110,6 +124,23 @@ async function sendCosTopicRedirect(chatId, threadOptions = {}) {
         reply_markup: {
           inline_keyboard: [[
             { text: 'Go to COS Topic', url: COS_TOPIC_URL }
+          ]]
+        },
+        ...threadOptions,
+      }
+    : threadOptions;
+
+  await bot.sendMessage(chatId, text, options);
+}
+
+async function sendMcTopicRedirect(chatId, threadOptions = {}) {
+  const text = `Please use the MC sub-topic to access MC features.`;
+
+  const options = MC_TOPIC_URL
+    ? {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: 'Go to MC Topic', url: MC_TOPIC_URL }
           ]]
         },
         ...threadOptions,
@@ -169,29 +200,38 @@ async function enterMC(chatId, sessionKey, threadOptions = {}) {
   });
 
   const text =
-    `You are now in MC service.\n\n` +
-    `Please choose an option.`;
+    `🩺 *MC Service*\n\n` +
+    `Please choose an option below.`;
 
   await bot.sendMessage(chatId, text, {
+    parse_mode: 'Markdown',
     ...mcMenuKeyboard(),
     ...threadOptions,
   });
 }
 
-async function handleMCMessage(chatId, text, threadOptions = {}) {
+async function handleMCMessage(chatId, text, msg, sessionKey, threadOptions = {}) {
+  if (!isMcTopicMessage(msg)) {
+    await sendMcTopicRedirect(chatId, threadOptions);
+    return;
+  }
+
   switch (text) {
     case 'Submit MC':
       await bot.sendMessage(
         chatId,
-        `Submit MC selected.\n\nReplace this with your MC submission workflow.`,
-        threadOptions
+        `🩺 *MC Submission*\n\nPlease use the link below to submit your MC details:\n${MC_FORM_URL}`,
+        {
+          parse_mode: 'Markdown',
+          ...threadOptions,
+        }
       );
       break;
 
     case 'MC Status':
       await bot.sendMessage(
         chatId,
-        `MC Status selected.\n\nReplace this with your MC status workflow.`,
+        `MC Status selected.\n\nThis section can be added later.`,
         threadOptions
       );
       break;
@@ -199,19 +239,29 @@ async function handleMCMessage(chatId, text, threadOptions = {}) {
     case 'MC Help':
       await bot.sendMessage(
         chatId,
-        `MC Help:\n` +
-          `- Submit MC\n` +
-          `- MC Status\n\n` +
-          `Select an option from the keyboard.`,
-        threadOptions
+        `🩺 *MC Help*\n\n` +
+          `• Submit MC — get the MC form link\n` +
+          `• MC Status — check MC-related status later\n\n` +
+          `Please use the buttons in the MC sub-topic.`,
+        {
+          parse_mode: 'Markdown',
+          ...threadOptions,
+        }
       );
+      break;
+
+    case 'Back to Main Menu':
+      await sendMainMenu(chatId, msg.from?.first_name || 'User', sessionKey, threadOptions);
       break;
 
     default:
       await bot.sendMessage(
         chatId,
         `Invalid MC option. Please use the MC menu buttons.`,
-        threadOptions
+        {
+          ...mcMenuKeyboard(),
+          ...threadOptions,
+        }
       );
       break;
   }
@@ -246,6 +296,11 @@ const serviceHandlers = {
   },
   MC: {
     enter: async (chatId, msg) => {
+      if (!isMcTopicMessage(msg)) {
+        await sendMcTopicRedirect(chatId, getThreadOptions(msg));
+        return;
+      }
+
       const sessionKey = getSessionKey(msg);
       await enterMC(chatId, sessionKey, getThreadOptions(msg));
     },
@@ -307,11 +362,6 @@ bot.on('message', async (msg) => {
     const state = getUserState(sessionKey);
     const threadOptions = getThreadOptions(msg);
 
-    if (text === 'Back to Main Menu') {
-      await sendMainMenu(chatId, firstName, sessionKey, threadOptions);
-      return;
-    }
-
     if (text === 'Refresh Menu') {
       await sendMainMenu(chatId, firstName, sessionKey, threadOptions);
       return;
@@ -348,13 +398,9 @@ bot.on('message', async (msg) => {
       return;
     }
 
-    if (state.menu === 'SERVICE' && state.service) {
-      const handler = serviceHandlers[state.service];
-
-      if (handler && typeof handler.handle === 'function') {
-        await handler.handle(chatId, text, threadOptions);
-        return;
-      }
+    if (state.menu === 'SERVICE' && state.service === 'MC') {
+      await handleMCMessage(chatId, text, msg, sessionKey, threadOptions);
+      return;
     }
 
     await sendMainMenu(chatId, firstName, sessionKey, threadOptions);
