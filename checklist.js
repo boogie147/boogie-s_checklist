@@ -597,8 +597,10 @@ async function announceSleepWarningToGroup() {
   await bot.sendMessage(
     GROUP_CHAT_ID,
     ['🟠 <b>COS Checklist Bot Standby</b>', 'Bot will go offline soon. Ensure your checklist is up to date.'].join('\n'),
-    { parse_mode: 'HTML' }
-    ...(COS_ID ? { message_thread_id: COS_ID } : {}),
+    {
+      parse_mode: 'HTML' 
+      ...(COS_ID ? { message_thread_id: COS_ID } : {}),
+    }
   );
 }
 
@@ -615,8 +617,10 @@ async function announceOfflineStatusToGroup(reason) {
         'No active duty user recorded.',
         reason ? `<i>Reason:</i> ${escapeHtml(reason)}` : '',
       ].filter(Boolean).join('\n'),
-      { parse_mode: 'HTML' }
-      ...(COS_ID ? { message_thread_id: COS_ID } : {}),
+      { 
+        parse_mode: 'HTML' 
+        ...(COS_ID ? { message_thread_id: COS_ID } : {}),
+      }
     );
     return;
   }
@@ -633,7 +637,10 @@ async function announceOfflineStatusToGroup(reason) {
       'Bot is now offline. Next run will post <b>Start Duty</b> again.',
       reason ? `<i>Reason:</i> ${escapeHtml(reason)}` : '',
     ].filter(Boolean).join('\n'),
-    { parse_mode: 'HTML' }
+    { 
+      parse_mode: 'HTML' 
+      ...(COS_ID ? { message_thread_id: COS_ID } : {}),
+    }
   );
 }
 
@@ -642,8 +649,13 @@ async function sendRunReminder(minMark) {
   if (!active || !active.userId) {
     if (GROUP_CHAT_ID) {
       try {
-        await bot.sendMessage(GROUP_CHAT_ID, `⏱️ ${minMark} min — Reminder: no duty user is active.`);
-        ...(COS_ID ? { message_thread_id: COS_ID } : {}),
+        await bot.sendMessage(
+          GROUP_CHAT_ID,
+          `⏱️ ${minMark} min — Reminder: no duty user is active.`;
+          {
+            ...(COS_ID ? { message_thread_id: COS_ID } : {}),
+          }
+        );
       } catch {}
     }
     return;
