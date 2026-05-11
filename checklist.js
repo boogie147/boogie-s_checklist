@@ -399,6 +399,7 @@ function helpText(isDm) {
     `• /help — show this help`,
     `• /menu — redraw checklist`,
     `• /clear — clear all your checks`,
+    `• /startduty — resend the Duty Checklist message from the COS topic`,
     ``,
     `<b>Group admin commands</b>`,
     `• /allow — (reply to a user) allow them to add/remove GLOBAL EXTRA tasks in DM`,
@@ -414,7 +415,7 @@ function inCosTopic(msg) {
   return Number(msg?.message_thread_id || 0) === COS_ID;
 }
 
-async function sendCosTopicRedirectMessage(chatId) {
+async function sendCosTopicRedirectMessage(chatId, threadId = null) {
   const text = 'Please use the COS sub-topic for COS actions.';
   const options = COS_TOPIC_URL
     ? {
@@ -422,9 +423,12 @@ async function sendCosTopicRedirectMessage(chatId) {
           inline_keyboard: [[
             { text: 'Go to COS Topic', url: COS_TOPIC_URL }
           ]]
-        }
+        },
+        ...(threadId ? { message_thread_id: threadId } : {}),
       }
-    : undefined;
+    : {
+        ...(threadId ? { message_thread_id: threadId } : {}),
+      };
 
   await bot.sendMessage(chatId, text, options);
 }
@@ -617,7 +621,7 @@ async function announceOfflineStatusToGroup(reason) {
         'No active duty user recorded.',
         reason ? `<i>Reason:</i> ${escapeHtml(reason)}` : '',
       ].filter(Boolean).join('\n'),
-      { 
+      {
         parse_mode: 'HTML',
         ...(COS_ID ? { message_thread_id: COS_ID } : {}),
       }
@@ -637,8 +641,8 @@ async function announceOfflineStatusToGroup(reason) {
       'Bot is now offline. Next run will post <b>Start Duty</b> again.',
       reason ? `<i>Reason:</i> ${escapeHtml(reason)}` : '',
     ].filter(Boolean).join('\n'),
-    { 
-      parse_mode: 'HTML', 
+    {
+      parse_mode: 'HTML',
       ...(COS_ID ? { message_thread_id: COS_ID } : {}),
     }
   );
@@ -669,7 +673,7 @@ async function sendRunReminder(minMark) {
       const { total, doneCount, complete } = checklistStats(dutyUid);
       const status = complete ? `✅ COMPLETE (${doneCount}/${total})` : `⏳ ${doneCount}/${total} done`;
       await bot.sendMessage(
-        GROUP_CHAT_ID, 
+        GROUP_CHAT_ID,
         `⏱️ ${minMark} min — Duty: ${name} — ${status}`,
         {
           ...(COS_ID ? { message_thread_id: COS_ID } : {}),
@@ -750,6 +754,27 @@ function registerChecklistHandlers(botInstance, deps = {}) {
     if (!uid || !isCosActive(uid)) return;
     resetChecksForUser(uid);
     await sendOrUpdateChecklist(uid);
+  });
+
+  bot.onText(cmdRe('startduty'), async (msg) => {
+    const chatId = msg.chat.id;
+
+    if (msg.chat.type === 'private') {
+      await sendCosTopicRedirectMessage(chatId);
+      return;
+    }
+
+    if (GROUP_CHAT_ID && String(chatId) !== String(GROUP_CHAT_ID)) {
+      await sendCosTopicRedirectMessage(chatId, msg.message_thread_id);
+      return;
+    }
+
+    if (COS_ID && !inCosTopic(msg)) {
+      await sendCosTopicRedirectMessage(chatId, msg.message_thread_id);
+      return;
+    }
+
+    await sendStartDutyPromptToGroup();
   });
 
   bot.onText(cmdRe('allow'), async (msg) => {
@@ -878,7 +903,7 @@ function registerChecklistHandlers(botInstance, deps = {}) {
       }
       return;
     }
-    
+
     if (!data.startsWith('cos:')) return;
 
     const uid = fromId;
@@ -999,7 +1024,7 @@ function registerChecklistHandlers(botInstance, deps = {}) {
 
   bot.on('message', async (msg) => {
     if (!msg.text) return;
-    if (/^\/(start|help|menu|clear|allow|deny|whoallowed)\b/i.test(msg.text)) return;
+    if (/^\/(start|help|menu|clear|startduty|allow|deny|whoallowed)\b/i.test(msg.text)) return;
     if (msg.chat.type !== 'private') return;
 
     const uid = msg.from?.id;
