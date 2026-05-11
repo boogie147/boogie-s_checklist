@@ -92,12 +92,18 @@ jobs:
 
           echo "Selected: duration=$DURATION, send_poll=$SEND_POLL"
 
-      - name: Run bot
+            - name: Run bot
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
+
           COS_ID: ${{ secrets.COS_ID }}
           COS_TOPIC_URL: ${{ secrets.COS_TOPIC_URL }}
+
+          MC_ID: ${{ secrets.MC_ID }}
+          MC_TOPIC_URL: ${{ secrets.MC_TOPIC_URL }}
+
+          MC_FORM_URL: "https://docs.google.com/forms/d/e/1FAIpQLSfjeklk85kKJdP_ELHelTWR3UFHLY0EfW5dFEUiKG4PRPB8JQ/viewform?usp=header"
 
           DROP_PENDING: "true"
           VERBOSE: ${{ github.event.inputs.verbose || 'true' }}
