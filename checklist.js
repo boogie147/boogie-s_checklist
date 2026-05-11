@@ -598,7 +598,7 @@ async function announceSleepWarningToGroup() {
     GROUP_CHAT_ID,
     ['🟠 <b>COS Checklist Bot Standby</b>', 'Bot will go offline soon. Ensure your checklist is up to date.'].join('\n'),
     {
-      parse_mode: 'HTML' 
+      parse_mode: 'HTML',
       ...(COS_ID ? { message_thread_id: COS_ID } : {}),
     }
   );
@@ -618,7 +618,7 @@ async function announceOfflineStatusToGroup(reason) {
         reason ? `<i>Reason:</i> ${escapeHtml(reason)}` : '',
       ].filter(Boolean).join('\n'),
       { 
-        parse_mode: 'HTML' 
+        parse_mode: 'HTML',
         ...(COS_ID ? { message_thread_id: COS_ID } : {}),
       }
     );
@@ -638,7 +638,7 @@ async function announceOfflineStatusToGroup(reason) {
       reason ? `<i>Reason:</i> ${escapeHtml(reason)}` : '',
     ].filter(Boolean).join('\n'),
     { 
-      parse_mode: 'HTML' 
+      parse_mode: 'HTML', 
       ...(COS_ID ? { message_thread_id: COS_ID } : {}),
     }
   );
@@ -651,7 +651,7 @@ async function sendRunReminder(minMark) {
       try {
         await bot.sendMessage(
           GROUP_CHAT_ID,
-          `⏱️ ${minMark} min — Reminder: no duty user is active.`;
+          `⏱️ ${minMark} min — Reminder: no duty user is active.`,
           {
             ...(COS_ID ? { message_thread_id: COS_ID } : {}),
           }
@@ -668,7 +668,13 @@ async function sendRunReminder(minMark) {
       const name = await safeGetChatMemberName(GROUP_CHAT_ID, dutyUid);
       const { total, doneCount, complete } = checklistStats(dutyUid);
       const status = complete ? `✅ COMPLETE (${doneCount}/${total})` : `⏳ ${doneCount}/${total} done`;
-      await bot.sendMessage(GROUP_CHAT_ID, `⏱️ ${minMark} min — Duty: ${name} — ${status}`);
+      await bot.sendMessage(
+        GROUP_CHAT_ID, 
+        `⏱️ ${minMark} min — Duty: ${name} — ${status}`,
+        {
+          ...(COS_ID ? { message_thread_id: COS_ID } : {}),
+        }
+      );
     } catch (e) {
       console.error('group reminder error:', e?.response?.body || e);
     }
