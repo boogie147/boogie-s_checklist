@@ -27,6 +27,11 @@ if (!BOT_TOKEN) {
 }
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
+bot.on('message', async (msg) => {
+  console.log('chat.id =', msg.chat?.id);
+  console.log('message_thread_id =', msg.message_thread_id);
+  console.log('text =', msg.text);
+});
 const userState = new Map();
 
 function getDefaultState() {
