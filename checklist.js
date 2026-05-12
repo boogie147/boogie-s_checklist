@@ -435,9 +435,7 @@ async function sendCosTopicRedirectMessage(chatId, threadId = null) {
   const options = COS_TOPIC_URL
     ? {
         reply_markup: {
-          inline_keyboard: [[
-            { text: 'Go to COS Topic', url: COS_TOPIC_URL }
-          ]]
+          inline_keyboard: [[{ text: 'Go to COS Topic', url: COS_TOPIC_URL }]],
         },
         ...(threadId ? { message_thread_id: threadId } : {}),
       }
@@ -930,8 +928,7 @@ function registerChecklistHandlers(botInstance, deps = {}) {
     if (!data.startsWith('cos:')) return;
 
     const uid = fromId;
-    if (!uid) return;
-    if (!isCosActive(uid)) return;
+    if (!uid || !isCosActive(uid)) return;
 
     const st = getUserState(uid);
 
@@ -1040,8 +1037,6 @@ function registerChecklistHandlers(botInstance, deps = {}) {
 
         await sendOrUpdateChecklist(uid);
       }
-
-      return;
     }
   });
 
@@ -1051,8 +1046,7 @@ function registerChecklistHandlers(botInstance, deps = {}) {
     if (msg.chat.type !== 'private') return;
 
     const uid = msg.from?.id;
-    if (!uid) return;
-    if (!isCosActive(uid)) return;
+    if (!uid || !isCosActive(uid)) return;
 
     const st = getUserState(uid);
 
@@ -1080,7 +1074,6 @@ function registerChecklistHandlers(botInstance, deps = {}) {
       }
 
       await sendOrUpdateChecklist(uid);
-      return;
     }
   });
 }
