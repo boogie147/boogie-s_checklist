@@ -91,7 +91,6 @@ function mcInlineMenu() {
     reply_markup: {
       inline_keyboard: [
         [{ text: '🩺 Apply MC', callback_data: 'menu:mc:apply' }],
-        [{ text: '📌 MC Status', callback_data: 'menu:mc:status' }],
         [{ text: '↩️ Back to Main Menu', callback_data: 'menu:mc:back' }],
       ],
     },
@@ -265,11 +264,12 @@ async function sendStartupGreeting() {
     `• MC`;
 
   try {
+    await bot.sendMessage(CHAT_ID, { text, parse_mode: 'Markdown' });
+  } catch {
     await bot.sendMessage(CHAT_ID, text, { parse_mode: 'Markdown' });
-    console.log('✅ Startup greeting sent.');
-  } catch (err) {
-    console.error('❌ Failed to send startup greeting:', err.message || err);
   }
+
+  console.log('✅ Startup greeting sent.');
 }
 
 bot.onText(/^\/start$/, async (msg) => {
@@ -321,23 +321,6 @@ bot.on('callback_query', async (q) => {
         reply_markup: {
           inline_keyboard: [[{ text: 'Open MC Form', url: MC_FORM_URL }]],
         },
-        ...threadOptions,
-      }
-    );
-    return;
-  }
-
-  if (data === 'menu:mc:status') {
-    if (!isMcTopicMessage(msg)) {
-      await sendMcTopicRedirect(chatId, threadOptions);
-      return;
-    }
-
-    await bot.sendMessage(
-      chatId,
-      `📌 *MC Status*\n\nThis section can be added later.`,
-      {
-        parse_mode: 'Markdown',
         ...threadOptions,
       }
     );
