@@ -119,7 +119,11 @@
     }
   },
   "duty": {
-    "active": null
+    "active": {
+      "userId": 6171407541,
+      "groupChatId": "-1002768068819",
+      "sinceIso": "2026-05-12T05:05:22.445Z"
+    }
   },
   "users": {
     "487942556": {
@@ -220,19 +224,19 @@
       "compact": true,
       "removeMode": false,
       "baseDone": [
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
       ],
-      "menuHintBootId": "2026-05-05T08:20:58.554Z",
+      "menuHintBootId": "2026-05-12T04:33:30.337Z",
       "extraDone": [],
       "awaitingAdd": false,
-      "checklistMessageId": 3813
+      "checklistMessageId": 3854
     },
     "6149242922": {
       "compact": false,
