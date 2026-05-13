@@ -119,7 +119,11 @@
     }
   },
   "duty": {
-    "active": null
+    "active": {
+      "userId": 1208863014,
+      "groupChatId": "-1002768068819",
+      "sinceIso": "2026-05-13T02:38:40.789Z"
+    }
   },
   "users": {
     "487942556": {
@@ -178,6 +182,24 @@
       "awaitingAdd": false,
       "checklistMessageId": null
     },
+    "1208863014": {
+      "compact": true,
+      "removeMode": false,
+      "baseDone": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "extraDone": [],
+      "menuHintBootId": "2026-05-13T02:16:53.003Z",
+      "awaitingAdd": false,
+      "checklistMessageId": 3944
+    },
     "1383789229": {
       "compact": false,
       "removeMode": false,
@@ -229,10 +251,10 @@
         false,
         false
       ],
-      "menuHintBootId": "2026-05-12T08:47:11.342Z",
+      "menuHintBootId": "2026-05-13T02:16:53.003Z",
       "extraDone": [],
       "awaitingAdd": false,
-      "checklistMessageId": 3926
+      "checklistMessageId": 3938
     },
     "6149242922": {
       "compact": false,
@@ -267,10 +289,10 @@
         false
       ],
       "extra": [],
-      "menuHintBootId": "2026-02-09T09:05:49.423Z",
+      "menuHintBootId": "2026-05-13T02:16:53.003Z",
       "extraDone": [],
       "awaitingAdd": false,
-      "checklistMessageId": null
+      "checklistMessageId": 3935
     },
     "7606867599": {
       "compact": false,
