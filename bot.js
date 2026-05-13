@@ -6,6 +6,8 @@ const {
   runChecklistStartup,
   startDutyForUser,
   getDutySummaryText,
+  canUserIssueInstruction,
+  sendInstructionToDuty,
 } = require('./checklist');
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -33,6 +35,7 @@ function getDefaultState() {
   return {
     menu: 'MAIN',
     service: null,
+    awaitingInstruction: false,
   };
 }
 
@@ -80,6 +83,7 @@ function cosInlineMenu() {
       inline_keyboard: [
         [{ text: '✅ Start Duty', callback_data: 'menu:cos:start' }],
         [{ text: '📋 Get Updates', callback_data: 'menu:cos:updates' }],
+        [{ text: '📝 Send Instructions', callback_data: 'menu:cos:instruction' }],
         [{ text: '↩️ Back to Main Menu', callback_data: 'menu:cos:back' }],
       ],
     },
@@ -198,6 +202,7 @@ async function openCosMenu(chatId, msg) {
   setUserState(userKey, {
     menu: 'SERVICE',
     service: 'COS',
+    awaitingInstruction: false,
   });
 
   await bot.sendMessage(
@@ -221,6 +226,7 @@ async function openMcMenu(chatId, msg) {
   setUserState(userKey, {
     menu: 'SERVICE',
     service: 'MC',
+    awaitingInstruction: false,
   });
 
   await bot.sendMessage(
@@ -263,11 +269,9 @@ async function sendStartupGreeting() {
     `• COS\n` +
     `• MC`;
 
-  try {
-    await bot.sendMessage(CHAT_ID, { text, parse_mode: 'Markdown' });
-  } catch {
-    await bot.sendMessage(CHAT_ID, text, { parse_mode: 'Markdown' });
-  }
+  await bot.sendMessage(CHAT_ID, text, {
+    parse_mode: 'Markdown',
+  });
 
   console.log('✅ Startup greeting sent.');
 }
@@ -338,6 +342,7 @@ bot.on('callback_query', async (q) => {
       return;
     }
 
+    setUserState(userKey, { awaitingInstruction: false });
     await startDutyForUser(fromId);
     return;
   }
@@ -348,11 +353,41 @@ bot.on('callback_query', async (q) => {
       return;
     }
 
+    setUserState(userKey, { awaitingInstruction: false });
     const summary = await getDutySummaryText();
     await bot.sendMessage(chatId, summary, {
       parse_mode: 'HTML',
       ...threadOptions,
     });
+    return;
+  }
+
+  if (data === 'menu:cos:instruction') {
+    if (!isCosTopicMessage(msg)) {
+      await sendCosTopicRedirect(chatId, threadOptions);
+      return;
+    }
+
+    const allowed = await canUserIssueInstruction(fromId);
+    if (!allowed) {
+      await bot.answerCallbackQuery(q.id, {
+        text: 'Not allowed to send instructions.',
+        show_alert: true,
+      }).catch(() => {});
+      return;
+    }
+
+    setUserState(userKey, {
+      menu: 'SERVICE',
+      service: 'COS',
+      awaitingInstruction: true,
+    });
+
+    await bot.sendMessage(
+      chatId,
+      `📝 Send your instruction now.\n\nIt will be delivered to the active duty personnel in DM.`,
+      threadOptions
+    );
     return;
   }
 
@@ -373,6 +408,31 @@ bot.on('message', async (msg) => {
     const userKey = getUserKey(msg);
     const state = getUserState(userKey);
     const threadOptions = getThreadOptions(msg);
+
+    if (
+      state.menu === 'SERVICE' &&
+      state.service === 'COS' &&
+      state.awaitingInstruction &&
+      msg.chat.type !== 'private' &&
+      isCosTopicMessage(msg)
+    ) {
+      setUserState(userKey, { awaitingInstruction: false });
+
+      const result = await sendInstructionToDuty(msg.from.id, text);
+
+      if (!result.ok && result.reason === 'no_active') {
+        await bot.sendMessage(chatId, 'there is no duty personnel active.', threadOptions);
+        return;
+      }
+
+      if (!result.ok) {
+        await bot.sendMessage(chatId, '⚠️ Failed to send instruction.', threadOptions);
+        return;
+      }
+
+      await bot.sendMessage(chatId, '✅ Instruction sent to the duty personnel.', threadOptions);
+      return;
+    }
 
     if (text === 'Refresh Menu') {
       await sendMainMenu(chatId, firstName, userKey, threadOptions);
