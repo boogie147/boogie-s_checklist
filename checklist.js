@@ -333,6 +333,35 @@ async function canUserModifyExtras(uid) {
   return allow.includes(uid);
 }
 
+async function canUserIssueInstruction(uid) {
+  if (!GROUP_CHAT_ID) return false;
+  if (await isAdmin(GROUP_CHAT_ID, uid)) return true;
+  const allow = getAllowlist(GROUP_CHAT_ID);
+  return allow.includes(uid);
+}
+
+async function sendInstructionToDuty(senderId, instructionText) {
+  const active = getActiveDuty();
+  if (!active || !active.userId) {
+    return { ok: false, reason: 'no_active' };
+  }
+
+  const senderName = await safeGetChatMemberName(GROUP_CHAT_ID, senderId);
+
+  await bot.sendMessage(
+    active.userId,
+    [
+      `<b>Instruction Received</b>`,
+      ``,
+      `<b>From:</b> ${escapeHtml(senderName)}`,
+      `<b>Message:</b> ${escapeHtml(instructionText)}`,
+    ].join('\n'),
+    { parse_mode: 'HTML' }
+  );
+
+  return { ok: true, dutyUserId: active.userId };
+}
+
 function nowSgtParts() {
   const now = new Date();
   const sgtMs = now.getTime() + 8 * 60 * 60 * 1000;
@@ -1074,6 +1103,7 @@ function registerChecklistHandlers(botInstance, deps = {}) {
       }
 
       await sendOrUpdateChecklist(uid);
+      return;
     }
   });
 }
@@ -1157,4 +1187,6 @@ module.exports = {
   runChecklistStartup,
   startDutyForUser,
   getDutySummaryText,
+  canUserIssueInstruction,
+  sendInstructionToDuty,
 };
