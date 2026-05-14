@@ -119,11 +119,7 @@
     }
   },
   "duty": {
-    "active": {
-      "userId": 6171407541,
-      "groupChatId": "-1002768068819",
-      "sinceIso": "2026-05-14T02:48:05.714Z"
-    }
+    "active": null
   },
   "users": {
     "487942556": {
@@ -242,9 +238,9 @@
       "compact": true,
       "removeMode": false,
       "baseDone": [
-        true,
-        true,
-        true,
+        false,
+        false,
+        false,
         false,
         false,
         false,
