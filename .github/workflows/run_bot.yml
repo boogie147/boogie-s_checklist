@@ -110,8 +110,8 @@ jobs:
           DURATION_MINUTES: ${{ steps.decide.outputs.duration }}
           SLEEP_WARNING_SECONDS: "60"
 
-          SEND_MORNING_POLL: ${{ steps.decide.outputs.send_poll }}
-
+          #SEND_MORNING_POLL: ${{ steps.decide.outputs.send_poll }}
+          SEND_MORNING_POLL: "true"
           MORNING_POLL_SGT_HOUR: "0"
           MORNING_POLL_SGT_MINUTE: "0"
           MORNING_POLL_WINDOW_MINUTES: "1440"
