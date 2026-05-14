@@ -112,9 +112,9 @@ jobs:
 
           SEND_MORNING_POLL: ${{ steps.decide.outputs.send_poll }}
 
-          MORNING_POLL_SGT_HOUR: "6"
+          MORNING_POLL_SGT_HOUR: "0"
           MORNING_POLL_SGT_MINUTE: "0"
-          MORNING_POLL_WINDOW_MINUTES: "60"
+          MORNING_POLL_WINDOW_MINUTES: "1440"
 
           RESET_CHECKS_ON_BOOT: "true"
           CLEAR_ACTIVE_DUTY_ON_BOOT: "true"
